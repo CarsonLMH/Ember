@@ -1,0 +1,52 @@
+[package]
+name = "ember"
+version = "1.0.0"
+description = "Fast macOS photo culling for Fujifilm JPEG+RAF pairs"
+authors = ["Carson Leung"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+name = "ember_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[features]
+# WebdriverIO e2e harness. Never enabled in normal dev/ship builds: the
+# embedded WebDriver server must not exist in the binary the user culls with.
+e2e = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-wdio = { version = "1", optional = true }
+tauri-plugin-wdio-webdriver = { version = "1", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+walkdir = "2"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+kamadak-exif = "0.6"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "rayon"] }
+fast_image_resize = "5"
+rayon = "1"
+crossbeam-channel = "0.5"
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+objc2 = "0.6.4"
+objc2-foundation = { version = "0.3.2", features = [
+    "NSFileManager",
+    "NSURL",
+    "NSString",
+    "NSError",
+] }
+xattr = "1.6.1"
+plist = "1.10.0"
+toml = "1.1.4"
+
+[profile.dev]
+# JPEG decode in unoptimized builds is unusably slow; keep deps optimized.
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

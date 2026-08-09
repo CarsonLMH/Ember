@@ -1,0 +1,44 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx vitest run
+      # tauri::generate_context! embeds ../dist at compile time — the frontend
+      # must exist before ANY cargo step or the macro fails on a clean runner.
+      - run: npm run build
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      # The XMP file-safety tests probe for exiftool and silently skip
+      # without it — install so they actually gate.
+      - run: brew install exiftool
+      - run: cargo fmt --check
+        working-directory: src-tauri
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: src-tauri
+      - run: cargo test
+        working-directory: src-tauri
+      - run: cargo build
+        working-directory: src-tauri
+# The perf/durability gates (scripts/gate.sh: flip-storm, zoomtest) need a
+# real window and real photos — they stay local release gates and CI does
+# NOT enforce the latency budget.

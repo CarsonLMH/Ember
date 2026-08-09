@@ -1,0 +1,48 @@
+#!/bin/bash
+# Regression gates (zoom blank-test + flip storm) in a HIDDEN window on an
+# isolated port — safe to run while a user instance is open on 1420.
+# Phases wait for the port to actually free (strictPort + a straggling
+# listener from the previous phase was an intermittent storm-killer), and
+# failures print the phase log tail instead of dying silently.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export PATH="$HOME/.cargo/bin:$PATH"
+
+TP=${1:?usage: scripts/gate.sh <test-photos-folder>}
+PORT=14210
+CFG="{\"build\":{\"devUrl\":\"http://localhost:$PORT\",\"beforeDevCommand\":\"npm run dev -- --port $PORT --strictPort\"}}"
+
+cleanup() { pkill -f "vite.*1421[0]" 2>/dev/null || true; }
+trap cleanup EXIT
+
+wait_port_free() {
+  for _ in $(seq 1 30); do
+    lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 || return 0
+    sleep 0.5
+  done
+  echo "GATE FAIL: port $PORT still busy after 15s"
+  return 1
+}
+
+run_phase() { # name, expected-pattern, env assignments...
+  local name=$1 expect=$2
+  shift 2
+  cleanup
+  wait_port_free
+  local log
+  log=$(mktemp)
+  echo "=== $name (hidden):"
+  env "$@" EMBER_HIDDEN=1 EMBER_OPEN="$TP" \
+    timeout 240 npm run tauri dev -- --config "$CFG" >"$log" 2>&1 || true
+  grep -E "$expect" "$log" || true
+  grep -qE "$expect" "$log" || {
+    echo "GATE FAIL: $name produced no result; log tail:"
+    tail -8 "$log"
+    exit 1
+  }
+}
+
+run_phase zoomtest 'zoomtest done: PASS' EMBER_ZOOMTEST=1
+run_phase storm 'storm done' EMBER_STORM=1
+
+echo "=== gates complete"
