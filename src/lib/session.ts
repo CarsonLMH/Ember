@@ -18,6 +18,7 @@ import {
   setCursor,
   setOrder,
   setRating,
+  setTags,
   trashPhoto,
   undoAction,
 } from './ipc';
@@ -27,6 +28,7 @@ import {
   SORTS,
   comparator,
   passesFilter,
+  passesTagFilter,
   type FilterMode,
   type SortMode,
 } from './order';
@@ -57,6 +59,7 @@ export interface SessionState {
   currentRecipe: { name: string | null; hasMeta: boolean } | null;
   recipeFilter: string | null; // recipe name, or UNKNOWN_RECIPE sentinel
   recipeNames: string[];
+  tagFilter: string | null;
   loading: boolean;
   error: string | null;
   notice: string | null;
@@ -86,6 +89,7 @@ let state: SessionState = {
   currentRecipe: null,
   recipeFilter: null,
   recipeNames: [],
+  tagFilter: null,
   loading: false,
   error: null,
   notice: null,
@@ -193,9 +197,13 @@ function rebuild(
   const filter = (patch.filter ?? state.filter) as FilterMode;
   const recipeFilter =
     patch.recipeFilter !== undefined ? patch.recipeFilter : state.recipeFilter;
+  const tagFilter = patch.tagFilter !== undefined ? patch.tagFilter : state.tagFilter;
   const sortedAll = [...all].sort(comparator(sort, reverse));
   const photos = sortedAll.filter(
-    (p) => passesFilter(p, filter) && passesRecipeFilter(p, recipeFilter),
+    (p) =>
+      passesFilter(p, filter) &&
+      passesRecipeFilter(p, recipeFilter) &&
+      passesTagFilter(p, tagFilter),
   );
   let cursor: number;
   const focusIdx = focusId ? photos.findIndex((p) => p.id === focusId) : -1;
@@ -347,6 +355,29 @@ export async function setRecipeFilter(recipeFilter: string | null): Promise<void
     recipeMapCache = await recipeMap(state.folderId).catch(() => ({}));
   }
   rebuild(state.all, { recipeFilter }, currentPhoto()?.id ?? null);
+}
+
+// ---------- tags ----------
+
+export function setTagFilter(tagFilter: string | null): void {
+  rebuild(state.all, { tagFilter }, currentPhoto()?.id ?? null);
+}
+
+/** Toggle a tag on the current photo. Journaled + undoable; no auto-advance —
+ * tags are additive, unlike the one-verdict-per-photo rating rhythm. */
+export async function toggleTag(tag: string): Promise<void> {
+  const photo = currentPhoto();
+  if (!photo || state.folderId === null) return;
+  const cur = photo.tags ?? [];
+  const next = cur.includes(tag) ? cur.filter((t) => t !== tag) : [...cur, tag];
+  try {
+    await setTags(state.folderId, photo.id, next); // journal precedes UI ack
+  } catch (e) {
+    showNotice(`Tag failed — ${String(e)}`);
+    return;
+  }
+  const all = state.all.map((p) => (p.id === photo.id ? { ...p, tags: next } : p));
+  rebuild(all, {}, photo.id);
 }
 
 export function loadRecipeNames(): void {
@@ -642,6 +673,12 @@ function applyDelta(delta: Delta | null): void {
     );
     rebuild(all, {}, delta.photoId);
   }
+  if (delta.tags !== null) {
+    const all = state.all.map((p) =>
+      p.id === delta.photoId ? { ...p, tags: delta.tags as string[] } : p,
+    );
+    rebuild(all, {}, delta.photoId);
+  }
   if (delta.trashed === false) {
     // Photo came back from the Trash — put the cursor on it.
     const photo = removed.get(delta.photoId);
@@ -696,7 +733,7 @@ export async function restoreFromTrash(photoId: string): Promise<void> {
     showNotice(`Restore failed — ${String(e)}`);
     return;
   }
-  applyDelta({ photoId, kind: 'restore', rating: null, trashed: false, error: null });
+  applyDelta({ photoId, kind: 'restore', rating: null, tags: null, trashed: false, error: null });
 }
 
 // ---------- folder lifecycle ----------

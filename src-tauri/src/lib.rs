@@ -37,6 +37,7 @@ pub struct PhotoOut {
     pub has_jpeg: bool,
     pub has_raf: bool,
     pub rating: u8,
+    pub tags: Vec<String>,
     /// On-disk file gone at last rescan; still listed, badged in the UI.
     pub missing: bool,
 }
@@ -117,6 +118,7 @@ fn scan_folder(
                 has_jpeg: dto.has_jpeg,
                 has_raf: dto.has_raf,
                 rating: existing.get(&e.id).map(|r| r.rating).unwrap_or(0),
+                tags: existing.get(&e.id).map(|r| r.tags.clone()).unwrap_or_default(),
                 missing: false,
             }
         })
@@ -139,6 +141,7 @@ fn scan_folder(
             has_jpeg: m.has_jpeg,
             has_raf: m.has_raf,
             rating: m.rating,
+            tags: m.tags,
             missing: true,
         });
     }
@@ -392,6 +395,12 @@ fn set_tags(
 /// Restore both halves from the Trash. Tolerates halves the user already put
 /// back via Finder: a half whose Trash copy is gone but whose original exists
 /// counts as restored. Pair rollback only unwinds moves made by THIS call.
+#[tauri::command]
+fn get_tag_vocab(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(settings::load_tag_vocab(&dir))
+}
+
 fn restore_from_payload(p: &TrashPayload) -> Result<(), String> {
     // (trash copy, original) → Ok(true) if this call moved the file.
     fn restore_half(t: &str, orig: &str) -> Result<bool, String> {
@@ -498,6 +507,7 @@ fn undo(state: tauri::State<'_, AppState>, folder_id: i64) -> Result<Option<Delt
                 photo_id: act.photo_id,
                 kind: "rate".into(),
                 rating: Some(p.from),
+                tags: None,
                 trashed: None,
                 error: None,
             }
@@ -520,6 +530,7 @@ fn undo(state: tauri::State<'_, AppState>, folder_id: i64) -> Result<Option<Delt
                 photo_id: act.photo_id,
                 kind: "tags".into(),
                 rating: None,
+                tags: Some(p.from),
                 trashed: None,
                 error: None,
             }
@@ -543,6 +554,7 @@ fn undo(state: tauri::State<'_, AppState>, folder_id: i64) -> Result<Option<Delt
                 photo_id: act.photo_id,
                 kind: "trash".into(),
                 rating: None,
+                tags: None,
                 trashed: Some(false),
                 error: err,
             }
@@ -568,6 +580,7 @@ fn undo(state: tauri::State<'_, AppState>, folder_id: i64) -> Result<Option<Delt
                         photo_id: act.photo_id,
                         kind: "restore".into(),
                         rating: None,
+                        tags: None,
                         trashed: Some(true),
                         error: None,
                     }
@@ -576,6 +589,7 @@ fn undo(state: tauri::State<'_, AppState>, folder_id: i64) -> Result<Option<Delt
                     photo_id: act.photo_id,
                     kind: "restore".into(),
                     rating: None,
+                    tags: None,
                     trashed: None,
                     error: Some(e),
                 },
@@ -606,6 +620,7 @@ fn redo(state: tauri::State<'_, AppState>, folder_id: i64) -> Result<Option<Delt
                 photo_id: act.photo_id,
                 kind: "rate".into(),
                 rating: Some(p.to),
+                tags: None,
                 trashed: None,
                 error: None,
             }
@@ -620,6 +635,7 @@ fn redo(state: tauri::State<'_, AppState>, folder_id: i64) -> Result<Option<Delt
                 photo_id: act.photo_id,
                 kind: "tags".into(),
                 rating: None,
+                tags: Some(p.to),
                 trashed: None,
                 error: None,
             }
@@ -645,6 +661,7 @@ fn redo(state: tauri::State<'_, AppState>, folder_id: i64) -> Result<Option<Delt
                         photo_id: act.photo_id,
                         kind: "trash".into(),
                         rating: None,
+                        tags: None,
                         trashed: Some(true),
                         error: None,
                     }
@@ -653,6 +670,7 @@ fn redo(state: tauri::State<'_, AppState>, folder_id: i64) -> Result<Option<Delt
                     photo_id: act.photo_id,
                     kind: "trash".into(),
                     rating: None,
+                    tags: None,
                     trashed: None,
                     error: Some(e),
                 },
@@ -677,6 +695,7 @@ fn redo(state: tauri::State<'_, AppState>, folder_id: i64) -> Result<Option<Delt
                 photo_id: act.photo_id,
                 kind: "restore".into(),
                 rating: None,
+                tags: None,
                 trashed: Some(false),
                 error: err,
             }
@@ -933,6 +952,7 @@ pub fn run() {
             xmp_pending,
             retry_xmp_errors,
             get_keymap,
+            get_tag_vocab,
             get_focus,
             get_metadata,
             get_recipe,

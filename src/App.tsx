@@ -10,6 +10,8 @@ import { installLogForwarding, runIfRequested } from './lib/devharness';
 import Filmstrip from './components/Filmstrip';
 import CheatSheet from './components/CheatSheet';
 import RecipeSwitcher from './components/RecipeSwitcher';
+import TagPalette from './components/TagPalette';
+import TagSwitcher from './components/TagSwitcher';
 import ExifPanel from './components/ExifPanel';
 import type { TrashedPhoto } from './lib/types';
 import './App.css';
@@ -213,9 +215,11 @@ export default function App() {
   const [showTrash, setShowTrash] = useState(false);
   const [showCheat, setShowCheat] = useState(false);
   const [showRecipes, setShowRecipes] = useState(false);
-  // Ref mirror so the (deps-stable) global key handler sees the live value.
-  const showRecipesRef = useRef(false);
-  showRecipesRef.current = showRecipes;
+  const [showTagPalette, setShowTagPalette] = useState(false);
+  const [showTagFilter, setShowTagFilter] = useState(false);
+  // Ref mirror so the (deps-stable) global key handler sees the live values.
+  const overlayOpenRef = useRef(false);
+  overlayOpenRef.current = showRecipes || showTagPalette || showTagFilter;
   const [showStrip, setShowStrip] = useState(localStorage.getItem('filmstrip') !== '0');
   const [showExif, setShowExif] = useState(localStorage.getItem('exifPanel') === '1');
   const [keysReady, setKeysReady] = useState(false);
@@ -261,8 +265,8 @@ export default function App() {
       // Form fields (recipe name input, filter dropdown) own their keys.
       const target = e.target as HTMLElement | null;
       if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
-      // The recipe switcher owns every key (incl. Escape) while open.
-      if (showRecipesRef.current) return;
+      // Open pickers/palettes own every key (incl. Escape) while mounted.
+      if (overlayOpenRef.current) return;
       if (e.key === 'Escape') {
         setShowCheat(false);
         setShowTrash(false);
@@ -342,6 +346,12 @@ export default function App() {
           break;
         case 'recipe_filter':
           setShowRecipes((v) => !v);
+          break;
+        case 'tag_palette':
+          setShowTagPalette((v) => !v);
+          break;
+        case 'tag_filter':
+          setShowTagFilter((v) => !v);
           break;
         case 'perf_hud':
           setShowPerf((v) => !v);
@@ -528,6 +538,13 @@ export default function App() {
                 {state.currentRecipe.name ?? 'unknown recipe'}
               </span>
             )}
+            {state.tagFilter && <span className="hud-chip">#{state.tagFilter}</span>}
+            {photo.tags && photo.tags.length > 0 && (
+              <span className="hud-chip hud-dim">
+                {photo.tags.slice(0, 2).map((t) => `#${t}`).join(' ')}
+                {photo.tags.length > 2 ? ` +${photo.tags.length - 2}` : ''}
+              </span>
+            )}
             {!state.autoAdvance && <span className="hud-chip">manual</span>}
             {zoomPercent !== null && <span className="hud-chip">{zoomPercent}%</span>}
             {state.blinkies && <span className="hud-chip">blinkies</span>}
@@ -630,6 +647,8 @@ export default function App() {
       )}
       {showCheat && <CheatSheet onClose={() => setShowCheat(false)} />}
       {showRecipes && <RecipeSwitcher onClose={() => setShowRecipes(false)} />}
+      {showTagPalette && <TagPalette onClose={() => setShowTagPalette(false)} />}
+      {showTagFilter && <TagSwitcher onClose={() => setShowTagFilter(false)} />}
       {showPerf && <PerfHud />}
     </div>
   );

@@ -32,6 +32,11 @@ export function comparator(sort: SortMode, reverse: boolean): (a: Photo, b: Phot
   return reverse ? (a: Photo, b: Photo) => -base(a, b) : base;
 }
 
+export function passesTagFilter(p: Photo, tag: string | null): boolean {
+  if (!tag) return true;
+  return (p.tags ?? []).includes(tag);
+}
+
 export function passesFilter(p: Photo, filter: FilterMode): boolean {
   switch (filter) {
     case 'all':

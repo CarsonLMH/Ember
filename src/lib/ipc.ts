@@ -18,6 +18,15 @@ export function setRating(folderId: number, photoId: string, rating: number): Pr
   return invoke('set_rating', { folderId, photoId, rating });
 }
 
+export function setTags(folderId: number, photoId: string, tags: string[]): Promise<void> {
+  return invoke('set_tags', { folderId, photoId, tags });
+}
+
+/** Tag vocabulary from tags.toml — re-read on every call, so edits are live. */
+export function getTagVocab(): Promise<string[]> {
+  return invoke<string[]>('get_tag_vocab');
+}
+
 export function trashPhoto(folderId: number, photoId: string): Promise<void> {
   return invoke('trash_photo', { folderId, photoId });
 }

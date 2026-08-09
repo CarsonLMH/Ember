@@ -35,6 +35,13 @@ pub struct FolderState {
 pub struct PhotoRow {
     pub rating: u8,
     pub trashed: bool,
+    pub tags: Vec<String>,
+}
+
+pub(crate) fn parse_tags(json: Option<String>) -> Vec<String> {
+    json.as_deref()
+        .and_then(|j| serde_json::from_str(j).ok())
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -61,6 +68,7 @@ pub struct Delta {
     pub photo_id: String,
     pub kind: String,
     pub rating: Option<u8>,
+    pub tags: Option<Vec<String>>,
     pub trashed: Option<bool>,
     pub error: Option<String>,
 }
@@ -100,6 +108,7 @@ pub struct MissingPhoto {
     pub has_jpeg: bool,
     pub has_raf: bool,
     pub rating: u8,
+    pub tags: Vec<String>,
 }
 
 impl Store {
@@ -223,13 +232,14 @@ impl Store {
         let mut existing: HashMap<String, PhotoRow> = HashMap::new();
         {
             let mut stmt =
-                tx.prepare("SELECT id, rating, trashed FROM photos WHERE folder_id = ?1")?;
+                tx.prepare("SELECT id, rating, trashed, tags FROM photos WHERE folder_id = ?1")?;
             let rows = stmt.query_map(params![folder_id], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     PhotoRow {
                         rating: r.get::<_, i64>(1)? as u8,
                         trashed: r.get::<_, i64>(2)? != 0,
+                        tags: parse_tags(r.get(3)?),
                     },
                 ))
             })?;
@@ -516,7 +526,7 @@ impl Store {
     pub fn missing_photos(&self, folder_id: i64) -> rusqlite::Result<Vec<MissingPhoto>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, dir, stem, jpeg_path, raf_path, rating FROM photos
+            "SELECT id, dir, stem, jpeg_path, raf_path, rating, tags FROM photos
              WHERE folder_id = ?1 AND missing = 1 AND trashed = 0
              ORDER BY stem",
         )?;
@@ -528,6 +538,7 @@ impl Store {
                 has_jpeg: r.get::<_, Option<String>>(3)?.is_some(),
                 has_raf: r.get::<_, Option<String>>(4)?.is_some(),
                 rating: r.get(5)?,
+                tags: parse_tags(r.get(6)?),
             })
         })?;
         rows.collect()

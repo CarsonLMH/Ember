@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { byCaptureOrder, comparator, passesFilter } from './order';
+import { byCaptureOrder, comparator, passesFilter, passesTagFilter } from './order';
 import type { Photo } from './types';
 
 function photo(p: Partial<Photo>): Photo {
@@ -70,5 +70,18 @@ describe('passesFilter', () => {
   it('starN matches the exact rating only', () => {
     expect(passesFilter(photo({ rating: 3 }), 'star3')).toBe(true);
     expect(passesFilter(photo({ rating: 4 }), 'star3')).toBe(false);
+  });
+});
+
+describe('passesTagFilter', () => {
+  it('null filter admits everything, including untagged', () => {
+    expect(passesTagFilter(photo({}), null)).toBe(true);
+    expect(passesTagFilter(photo({ tags: ['print'] }), null)).toBe(true);
+  });
+
+  it('matches exact tag membership', () => {
+    expect(passesTagFilter(photo({ tags: ['print', 'album'] }), 'album')).toBe(true);
+    expect(passesTagFilter(photo({ tags: ['print'] }), 'album')).toBe(false);
+    expect(passesTagFilter(photo({}), 'album')).toBe(false);
   });
 });

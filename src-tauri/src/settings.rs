@@ -52,6 +52,31 @@ pub fn load(config_dir: &Path) -> BlinkiesCfg {
     }
 }
 
+/// Load the tag vocabulary from tags.toml (created with commented defaults).
+/// Read on every palette open, so edits apply without a relaunch.
+pub fn load_tag_vocab(config_dir: &Path) -> Vec<String> {
+    let path = config_dir.join("tags.toml");
+    if !path.exists() {
+        let _ = std::fs::write(
+            &path,
+            "# Ember tag vocabulary — the tag palette offers these, in order.\n\
+             # Free-form strings; they write to XMP dc:subject (see docs/METADATA.md).\n\n\
+             tags = [\"portfolio\", \"album\", \"print\", \"share\", \"revisit\"]\n",
+        );
+    }
+    let parsed: Option<toml::Value> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| toml::from_str(&s).ok());
+    parsed
+        .and_then(|v| v.get("tags").and_then(|t| t.as_array().cloned()))
+        .map(|arr| {
+            arr.into_iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

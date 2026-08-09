@@ -91,6 +91,9 @@ export default function Filmstrip({
         <StripThumb id={p.id} />
         {p.rating > 0 && <span className="strip-stars">{'★'.repeat(p.rating)}</span>}
         {p.missing && <span className="strip-missing-mark">⚠</span>}
+        {p.tags && p.tags.length > 0 && (
+          <span className="strip-tags">#{p.tags.length}</span>
+        )}
       </div>,
     );
   }

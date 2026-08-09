@@ -7,6 +7,7 @@ export interface Photo {
   hasJpeg: boolean;
   hasRaf: boolean;
   rating: number;
+  tags?: string[];
   /** On-disk file gone at last rescan; still listed, badged in the UI. */
   missing?: boolean;
   /** Epoch millis from EXIF DateTimeOriginal; filled in by the background pass */
@@ -35,6 +36,7 @@ export interface Delta {
   photoId: string;
   kind: string;
   rating: number | null;
+  tags: string[] | null;
   trashed: boolean | null;
   error: string | null;
 }

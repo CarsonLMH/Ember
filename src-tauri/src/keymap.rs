@@ -31,6 +31,8 @@ const DEFAULTS: &[(&str, &[&str], &str)] = &[
     ("filter_star4", &["Shift+4"], "Filter: exactly ★★★★"),
     ("filter_star5", &["Shift+5"], "Filter: exactly ★★★★★"),
     ("recipe_filter", &["c"], "Recipe filter quick-switcher"),
+    ("tag_palette", &["g"], "Tag palette"),
+    ("tag_filter", &["Shift+g"], "Tag filter quick-switcher"),
     (
         "sort_cycle",
         &["s"],
