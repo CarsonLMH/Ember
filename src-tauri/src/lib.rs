@@ -118,7 +118,10 @@ fn scan_folder(
                 has_jpeg: dto.has_jpeg,
                 has_raf: dto.has_raf,
                 rating: existing.get(&e.id).map(|r| r.rating).unwrap_or(0),
-                tags: existing.get(&e.id).map(|r| r.tags.clone()).unwrap_or_default(),
+                tags: existing
+                    .get(&e.id)
+                    .map(|r| r.tags.clone())
+                    .unwrap_or_default(),
                 missing: false,
             }
         })
