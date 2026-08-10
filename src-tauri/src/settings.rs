@@ -18,9 +18,14 @@ pub struct FacesCfg {
 impl Default for FacesCfg {
     fn default() -> Self {
         Self {
+            // Calibrated on real X-T50 photos (2026-08-10, 145 pos/145 neg):
+            // same-person min 0.504 / p5 0.537 / median 0.758; cross-person
+            // max 0.322; strongest stranger 0.377. 0.45 sits 0.07+ over every
+            // observed non-match and under every observed match; the margin is
+            // generous because true matches led the runner-up by ≥0.18.
             enabled: true,
-            auto_assign_threshold: 0.40,
-            auto_assign_margin: 0.05,
+            auto_assign_threshold: 0.45,
+            auto_assign_margin: 0.08,
             cluster_threshold: 0.45,
             min_det_score: 0.8,
         }
@@ -63,9 +68,9 @@ fn default_file_contents() -> String {
      # Detection confidence floor (0-1) and clustering similarity threshold.\n\
      min_det_score = 0.8\n\
      cluster_threshold = 0.45\n\
-     # Auto-recognition thresholds (calibrated before they take effect).\n\
-     auto_assign_threshold = 0.4\n\
-     auto_assign_margin = 0.05\n\n\
+     # Auto-recognition thresholds (calibrated on real photos 2026-08).\n\
+     auto_assign_threshold = 0.45\n\
+     auto_assign_margin = 0.08\n\n\
      [cache]\n\
      # Preview/thumbnail cache budget in MB (~1MB per photo). Once per launch,\n\
      # photos from the least-recently-opened folders are pruned back under\n\
@@ -246,7 +251,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let f = load(&dir).faces;
         assert!(f.enabled);
-        assert!((f.auto_assign_threshold - 0.40).abs() < 1e-6);
+        assert!((f.auto_assign_threshold - 0.45).abs() < 1e-6);
         assert!((f.cluster_threshold - 0.45).abs() < 1e-6);
         // Partial override; out-of-range values fall back to defaults.
         std::fs::write(
