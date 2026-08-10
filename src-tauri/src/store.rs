@@ -191,9 +191,20 @@ impl Store {
             let _ = conn.execute("ALTER TABLE xmp_queue ADD COLUMN tags TEXT", []);
             conn.pragma_update(None, "user_version", 4)?;
         }
+        // v5: faces (SPEC §14). DB-only, not verdicts: no journal rows, no
+        // undo entanglement. Schema notes live with the face code (facestore.rs).
+        if version < 5 {
+            conn.execute_batch(crate::facestore::SCHEMA_V5)?;
+            conn.pragma_update(None, "user_version", 5)?;
+        }
         Ok(Self {
             conn: Mutex::new(conn),
         })
+    }
+
+    /// Face methods live in facestore.rs (same crate, second impl block).
+    pub(crate) fn lock_conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap()
     }
 
     // ---------- folders / scan ----------

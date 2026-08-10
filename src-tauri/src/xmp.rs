@@ -319,7 +319,9 @@ pub fn spawn_queue_worker(app: tauri::AppHandle, store: Arc<Store>, et: Arc<Exif
                         Ok(()) => {
                             let _ = store.xmp_done(&job.photo_id, job.rating);
                             // The JPEG rewrite changed mtime/size but not pixels:
-                            // refresh preview validity so it isn't regenerated.
+                            // refresh preview validity so it isn't regenerated —
+                            // and the face_scan stat so a star rating never
+                            // triggers a needless face re-index (plan round 3).
                             if let Some(j) = &jpeg {
                                 if let Ok(meta) = std::fs::metadata(j) {
                                     let mtime = meta
@@ -335,6 +337,11 @@ pub fn spawn_queue_worker(app: tauri::AppHandle, store: Arc<Store>, et: Arc<Exif
                                             meta.len(),
                                         );
                                     }
+                                    let _ = store.face_scan_refresh_stat(
+                                        &job.photo_id,
+                                        mtime as i64,
+                                        meta.len() as i64,
+                                    );
                                 }
                             }
                         }

@@ -78,6 +78,40 @@ impl PreviewState {
         self.cache_dir.join(format!("{id}-t.jpg"))
     }
 
+    /// Face chip `{id}-f{n}.jpg` — square crop baked by the face worker,
+    /// self-healed by the repair queue (cache dir is safe to delete).
+    pub fn face_chip_path(&self, id: &str, n: i64) -> PathBuf {
+        self.cache_dir.join(format!("{id}-f{n}.jpg"))
+    }
+
+    /// Pixel invalidation / stale marking: drop this photo's baked chips.
+    pub fn delete_face_chips(&self, id: &str, count: i64) {
+        for n in 0..count.max(0) {
+            let _ = std::fs::remove_file(self.face_chip_path(id, n));
+        }
+    }
+
+    /// Delete-all-face-data cleanup: sweep every baked chip in the cache.
+    pub fn delete_all_face_chips(&self) {
+        let Ok(entries) = std::fs::read_dir(&self.cache_dir) else {
+            return;
+        };
+        for e in entries.filter_map(Result::ok) {
+            let name = e.file_name().to_string_lossy().into_owned();
+            // {16-hex}-f{n}.jpg
+            if let Some((stem, rest)) = name.split_once("-f") {
+                if stem.len() == 16
+                    && stem.chars().all(|c| c.is_ascii_hexdigit())
+                    && rest
+                        .strip_suffix(".jpg")
+                        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+                {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
+    }
+
     fn raf_source_path(&self, id: &str) -> PathBuf {
         self.cache_dir.join(format!("{id}-raf.jpg"))
     }
@@ -334,12 +368,18 @@ fn write_thumb(preview: &RgbImage, out: &Path) -> std::io::Result<()> {
     let dw = ((w as f64 * scale).round() as u32).max(1);
     let dh = ((h as f64 * scale).round() as u32).max(1);
     let small = resize_rgb(preview, dw, dh).map_err(std::io::Error::other)?;
+    write_jpeg(&small, out, THUMB_QUALITY)
+}
+
+/// Atomic-ish JPEG publish (unique temp + rename) — shared by thumbs and
+/// face chips so concurrent writers can never interleave into one file.
+pub(crate) fn write_jpeg(img: &RgbImage, out: &Path, quality: u8) -> std::io::Result<()> {
     let tmp = unique_tmp(out);
     {
         let file = std::fs::File::create(&tmp)?;
         let mut wtr = std::io::BufWriter::new(file);
-        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut wtr, THUMB_QUALITY);
-        enc.encode_image(&small).map_err(std::io::Error::other)?;
+        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut wtr, quality);
+        enc.encode_image(img).map_err(std::io::Error::other)?;
     }
     std::fs::rename(&tmp, out)?;
     Ok(())

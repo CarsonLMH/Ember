@@ -33,6 +33,7 @@ const DEFAULTS: &[(&str, &[&str], &str)] = &[
     ("recipe_filter", &["c"], "Recipe filter quick-switcher"),
     ("tag_palette", &["g"], "Tag palette"),
     ("tag_filter", &["Shift+g"], "Tag filter quick-switcher"),
+    ("people_panel", &["p"], "Toggle People panel"),
     (
         "sort_cycle",
         &["s"],

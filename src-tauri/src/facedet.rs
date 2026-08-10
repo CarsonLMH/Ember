@@ -15,7 +15,6 @@ pub const YUNET_NMS_IOU: f32 = 0.3;
 
 /// SFace consumes a 112×112 landmark-aligned crop; embeddings are 128-d.
 pub const SFACE_INPUT: usize = 112;
-#[cfg_attr(not(test), allow(dead_code))] // matching/clustering arrive in Slice A/B
 pub const EMBED_DIM: usize = 128;
 
 /// ArcFace/SFace canonical 5-point template in 112×112 space, same order as
@@ -259,7 +258,6 @@ pub fn l2_normalize(v: &mut [f32]) {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // matching/clustering arrive in Slice A/B
 pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
     debug_assert_eq!(a.len(), b.len());
     let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
@@ -270,6 +268,118 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
     } else {
         dot / (na * nb)
     }
+}
+
+// ---------- embedding storage ----------
+
+/// 128 × f32 little-endian — the `faces.embedding` BLOB format.
+pub fn embedding_to_blob(v: &[f32]) -> Vec<u8> {
+    v.iter().flat_map(|x| x.to_le_bytes()).collect()
+}
+
+pub fn blob_to_embedding(b: &[u8]) -> Option<Vec<f32>> {
+    if b.len() != EMBED_DIM * 4 {
+        return None;
+    }
+    Some(
+        b.chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect(),
+    )
+}
+
+// ---------- clustering (People panel "Unnamed") ----------
+
+/// Deterministic greedy clustering: faces in input order, each joining the
+/// first existing cluster whose *first member* (its anchor) is within
+/// `threshold` cosine similarity, else founding a new cluster. Anchor
+/// comparison (not centroid) keeps results order-stable and cheap; input is
+/// sorted by the caller (det_score desc) so anchors are strong faces.
+pub fn cluster_greedy(embeddings: &[Vec<f32>], threshold: f32) -> Vec<Vec<usize>> {
+    let mut clusters: Vec<Vec<usize>> = Vec::new();
+    for (i, emb) in embeddings.iter().enumerate() {
+        let found = clusters
+            .iter_mut()
+            .find(|c| cosine(&embeddings[c[0]], emb) >= threshold);
+        match found {
+            Some(c) => c.push(i),
+            None => clusters.push(vec![i]),
+        }
+    }
+    clusters
+}
+
+// ---------- carry-over correspondence (rescan / model change) ----------
+
+/// Confident-match thresholds for transferring user state old→new rows.
+/// Same-photo re-detections overlap heavily and embed nearly identically, so
+/// both bars are conservative without being fragile.
+pub const CARRY_IOU: f32 = 0.5;
+pub const CARRY_COSINE: f32 = 0.5;
+
+pub struct CarrySide<'a> {
+    /// Normalized display-space rect.
+    pub rect: [f32; 4],
+    /// None when the embedding must not be compared (cross-generation).
+    pub embedding: Option<&'a [f32]>,
+}
+
+/// Match old detections to new ones for the carry-over transaction.
+/// Same-generation: rect-IoU AND embedding similarity must both clear their
+/// bars. Cross-generation (either side's embedding withheld by the caller):
+/// geometric correspondence only — embeddings from different model
+/// generations are never comparable. Ambiguity (an old face whose best new
+/// match is already claimed by a stronger old face) drops the match: that
+/// face's state lapses to Unnamed by design.
+pub fn match_carry_over(old: &[CarrySide], new: &[CarrySide]) -> Vec<(usize, usize)> {
+    // Best new candidate per old face, then greedy by IoU strength so a
+    // contested new face goes to the strongest overlap.
+    let mut candidates: Vec<(f32, usize, usize)> = Vec::new();
+    for (oi, o) in old.iter().enumerate() {
+        for (ni, n) in new.iter().enumerate() {
+            let iou_v = iou(&o.rect, &n.rect);
+            if iou_v < CARRY_IOU {
+                continue;
+            }
+            if let (Some(oe), Some(ne)) = (o.embedding, n.embedding) {
+                if cosine(oe, ne) < CARRY_COSINE {
+                    continue;
+                }
+            }
+            candidates.push((iou_v, oi, ni));
+        }
+    }
+    candidates.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut used_old = vec![false; old.len()];
+    let mut used_new = vec![false; new.len()];
+    let mut pairs = Vec::new();
+    for (_, oi, ni) in candidates {
+        if !used_old[oi] && !used_new[ni] {
+            used_old[oi] = true;
+            used_new[ni] = true;
+            pairs.push((oi, ni));
+        }
+    }
+    pairs
+}
+
+/// Square chip crop with +25% margin around a normalized rect, clamped to the
+/// image. Returns pixel (x, y, side) in preview space.
+pub fn chip_crop(rect: [f32; 4], pw: u32, ph: u32) -> (u32, u32, u32) {
+    let (pw_f, ph_f) = (pw as f32, ph as f32);
+    let (x, y, w, h) = (
+        rect[0] * pw_f,
+        rect[1] * ph_f,
+        rect[2] * pw_f,
+        rect[3] * ph_f,
+    );
+    let side = (w.max(h) * 1.5).max(1.0); // face + 25% margin each side
+    let cx = x + w / 2.0;
+    let cy = y + h / 2.0;
+    let side = side.min(pw_f).min(ph_f);
+    let x0 = (cx - side / 2.0).clamp(0.0, pw_f - side);
+    let y0 = (cy - side / 2.0).clamp(0.0, ph_f - side);
+    (x0 as u32, y0 as u32, side as u32)
 }
 
 #[cfg(test)]
@@ -413,5 +523,101 @@ mod tests {
         let mut v = vec![3.0, 4.0];
         l2_normalize(&mut v);
         assert!((v[0] - 0.6).abs() < 1e-6 && (v[1] - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn embedding_blob_round_trip() {
+        let v: Vec<f32> = (0..EMBED_DIM).map(|i| (i as f32) * 0.25 - 3.5).collect();
+        let blob = embedding_to_blob(&v);
+        assert_eq!(blob.len(), EMBED_DIM * 4);
+        assert_eq!(blob_to_embedding(&blob).unwrap(), v);
+        assert!(blob_to_embedding(&blob[1..]).is_none(), "wrong size → None");
+    }
+
+    #[test]
+    fn cluster_greedy_is_deterministic_and_threshold_bound() {
+        // Two tight groups + one outlier, in mixed order.
+        let e = |x: f32, y: f32| {
+            let mut v = vec![x, y];
+            l2_normalize(&mut v);
+            v
+        };
+        let embs = vec![
+            e(1.0, 0.0),   // A anchor
+            e(0.0, 1.0),   // B anchor
+            e(0.98, 0.05), // near A
+            e(0.05, 0.98), // near B
+            e(-1.0, -1.0), // outlier
+        ];
+        let clusters = cluster_greedy(&embs, 0.9);
+        assert_eq!(clusters.len(), 3);
+        assert_eq!(clusters[0], vec![0, 2]);
+        assert_eq!(clusters[1], vec![1, 3]);
+        assert_eq!(clusters[2], vec![4]);
+        // Determinism: same input, same output.
+        assert_eq!(cluster_greedy(&embs, 0.9), clusters);
+    }
+
+    #[test]
+    fn carry_over_matches_same_gen_and_ambiguous_lapses() {
+        let r = |x: f32| [x, 0.1, 0.2, 0.2];
+        let e1 = vec![1.0f32, 0.0];
+        let e2 = vec![0.0f32, 1.0];
+        // Same-gen: overlapping rect + same embedding → match.
+        let old = [CarrySide {
+            rect: r(0.10),
+            embedding: Some(&e1),
+        }];
+        let new = [CarrySide {
+            rect: r(0.11),
+            embedding: Some(&e1),
+        }];
+        assert_eq!(match_carry_over(&old, &new), vec![(0, 0)]);
+        // Same-gen: overlapping rect but a DIFFERENT face there now → no match.
+        let new_diff = [CarrySide {
+            rect: r(0.11),
+            embedding: Some(&e2),
+        }];
+        assert!(match_carry_over(&old, &new_diff).is_empty());
+        // Cross-gen (no embeddings): geometry alone decides.
+        let old_x = [CarrySide {
+            rect: r(0.10),
+            embedding: None,
+        }];
+        let new_x = [CarrySide {
+            rect: r(0.11),
+            embedding: None,
+        }];
+        assert_eq!(match_carry_over(&old_x, &new_x), vec![(0, 0)]);
+        // Ambiguity: two old faces best-match the same new face → only the
+        // stronger overlap survives; the other's state lapses.
+        let old_amb = [
+            CarrySide {
+                rect: [0.10, 0.1, 0.2, 0.2],
+                embedding: None,
+            },
+            CarrySide {
+                rect: [0.13, 0.1, 0.2, 0.2],
+                embedding: None,
+            },
+        ];
+        let new_amb = [CarrySide {
+            rect: [0.11, 0.1, 0.2, 0.2],
+            embedding: None,
+        }];
+        let pairs = match_carry_over(&old_amb, &new_amb);
+        assert_eq!(pairs, vec![(0, 0)], "contested new face goes to best IoU");
+    }
+
+    #[test]
+    fn chip_crop_squares_margins_and_clamps() {
+        // Face rect 200×100 at (100,50) in a 1000×800 preview.
+        let (x, y, side) = chip_crop([0.1, 0.0625, 0.2, 0.125], 1000, 800);
+        assert_eq!(side, 300, "1.5× the long edge");
+        assert_eq!(x, 50, "centered on the face");
+        assert_eq!(y, 0, "clamped to the top edge");
+        // A face at the corner stays inside the image.
+        let (x, y, side) = chip_crop([0.9, 0.9, 0.1, 0.1], 1000, 800);
+        assert!(x + side <= 1000 && y + side <= 800);
     }
 }
