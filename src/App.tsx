@@ -537,13 +537,7 @@ export default function App() {
         <canvas ref={canvasRef} className="viewer-canvas" />
 
         {showFaces && photo && state.currentFaces && state.currentFaces.length > 0 && (
-          <FaceBadges
-            faces={state.currentFaces}
-            onOpenPanel={() => {
-              setShowPeople(true);
-              setShowTrash(false);
-            }}
-          />
+          <FaceBadges faces={state.currentFaces} />
         )}
 
         {photo && (

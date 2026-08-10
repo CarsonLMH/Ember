@@ -6,18 +6,14 @@ import { faceReject, faceSetName, setFacesIgnored, type FaceOut } from '../lib/i
 /**
  * Named-face badges over the photo (SPEC §14) and the on-photo correction
  * menu. Named-only by default — a HUD full of "unknown" boxes would be noise
- * during culling; unnamed faces get a single quiet count that opens the panel.
+ * during culling; unnamed faces get a single quiet count that reveals them
+ * on demand, so a face you just un-named is still labelable here (`p` opens
+ * the People panel, so this layer doesn't duplicate that).
  *
  * The layer is inert (pointer-events: none) except the badges themselves, so
  * pan/pinch/double-click still reach the canvas underneath.
  */
-export default function FaceBadges({
-  faces,
-  onOpenPanel,
-}: {
-  faces: FaceOut[];
-  onOpenPanel: () => void;
-}) {
+export default function FaceBadges({ faces }: { faces: FaceOut[] }) {
   const [, bump] = useState(0);
   const [menuFor, setMenuFor] = useState<FaceOut | null>(null);
   const [naming, setNaming] = useState(false);
@@ -138,16 +134,6 @@ export default function FaceBadges({
           >
             {unnamedFaces.length} unnamed face{unnamedFaces.length === 1 ? '' : 's'}
             {showUnnamed ? ' — click a box to name' : ''}
-          </button>
-          <button
-            className="face-unnamed"
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenPanel();
-            }}
-            title="Open the People panel"
-          >
-            people panel
           </button>
         </span>
       )}
