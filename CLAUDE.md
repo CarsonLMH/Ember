@@ -39,7 +39,7 @@ macOS photo-culling app (Tauri 2 + Rust + React/TS). **Read SPEC.md first** — 
 
 - DB: `~/Library/Application Support/com.cleung.ember/ember.sqlite3`
 - Config + keymap + `recipes.toml`: `~/Library/Application Support/com.cleung.ember/`
-- Preview/thumb cache: `~/Library/Caches/com.cleung.ember/` (safe to delete)
+- Preview/thumb/chip cache: `~/Library/Caches/com.cleung.ember/` (safe to delete; ~1MB/photo). A janitor prunes it to `[cache] max_mb` (settings.toml, default 2048) once per launch, oldest-opened folders first, never the folder open in this session.
 
 ## Conventions
 

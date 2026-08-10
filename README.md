@@ -31,7 +31,7 @@ cd src-tauri && cargo test        # pairing, journal, recipes, XMP safety
 
 - Verdict journal (SQLite): `~/Library/Application Support/com.cleung.ember/ember.sqlite3`
 - `keymap.toml`, `settings.toml`, `recipes.toml`: same folder (created with commented defaults; edit + relaunch, recipes hot-reload)
-- Preview/thumbnail cache: `~/Library/Caches/com.cleung.ember/` (safe to delete)
+- Preview/thumbnail cache: `~/Library/Caches/com.cleung.ember/` (safe to delete; auto-pruned to `[cache] max_mb` from settings.toml, default 2GB, oldest folders first)
 
 ## Guarantees
 

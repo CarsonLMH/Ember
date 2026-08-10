@@ -207,6 +207,25 @@ impl Store {
         self.conn.lock().unwrap()
     }
 
+    // ---------- cache janitor inputs ----------
+
+    /// Every known photo id → its folder (trashed included: their thumbnails
+    /// serve the trash panel and age out with the folder like everything else).
+    pub fn cache_photo_folders(&self) -> rusqlite::Result<HashMap<String, i64>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, folder_id FROM photos")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        rows.collect()
+    }
+
+    /// folder_id → updated_at (bumped on every open — recency for eviction).
+    pub fn folder_recency(&self) -> rusqlite::Result<HashMap<i64, i64>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, updated_at FROM folders")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
+        rows.collect()
+    }
+
     // ---------- folders / scan ----------
 
     pub fn open_folder(&self, path: &str) -> rusqlite::Result<FolderState> {

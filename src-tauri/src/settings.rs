@@ -27,10 +27,23 @@ impl Default for FacesCfg {
     }
 }
 
+/// `[cache]` — preview/thumb/chip cache budget. 0 disables cleanup.
+#[derive(Debug, Clone, Copy)]
+pub struct CacheCfg {
+    pub max_mb: u64,
+}
+
+impl Default for CacheCfg {
+    fn default() -> Self {
+        Self { max_mb: 2048 }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Settings {
     pub blinkies: BlinkiesCfg,
     pub faces: FacesCfg,
+    pub cache: CacheCfg,
 }
 
 fn default_file_contents() -> String {
@@ -52,7 +65,12 @@ fn default_file_contents() -> String {
      cluster_threshold = 0.45\n\
      # Auto-recognition thresholds (calibrated before they take effect).\n\
      auto_assign_threshold = 0.4\n\
-     auto_assign_margin = 0.05\n"
+     auto_assign_margin = 0.05\n\n\
+     [cache]\n\
+     # Preview/thumbnail cache budget in MB (~1MB per photo). Once per launch,\n\
+     # photos from the least-recently-opened folders are pruned back under\n\
+     # this. Everything regenerates on demand. 0 = never clean up.\n\
+     max_mb = 2048\n"
         .to_string()
 }
 
@@ -113,7 +131,22 @@ pub fn load(config_dir: &Path) -> Settings {
         cluster_threshold: get_f32("cluster_threshold", 0.0, 1.0).unwrap_or(fd.cluster_threshold),
         min_det_score: get_f32("min_det_score", 0.0, 1.0).unwrap_or(fd.min_det_score),
     };
-    Settings { blinkies, faces }
+
+    let cache = CacheCfg {
+        max_mb: parsed
+            .as_ref()
+            .and_then(|v| v.get("cache"))
+            .and_then(|s| s.get("max_mb"))
+            .and_then(|v| v.as_integer())
+            .filter(|v| *v >= 0)
+            .map(|v| v as u64)
+            .unwrap_or(CacheCfg::default().max_mb),
+    };
+    Settings {
+        blinkies,
+        faces,
+        cache,
+    }
 }
 
 /// Mirror an app-driven enabled/disabled transition into settings.toml —

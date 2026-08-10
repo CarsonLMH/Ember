@@ -206,6 +206,15 @@ impl PreviewState {
         self.inner.lock().unwrap().by_id.get(id).cloned()
     }
 
+    /// Ids of the folder open right now — the cache janitor's protected set.
+    pub fn current_ids(&self) -> std::collections::HashSet<String> {
+        self.inner.lock().unwrap().by_id.keys().cloned().collect()
+    }
+
+    pub fn cache_dir(&self) -> &Path {
+        &self.cache_dir
+    }
+
     /// Snapshot of entries ordered by distance from the cursor (nearest first,
     /// forward-biased) — for background workers that want cursor priority.
     pub fn entries_by_distance(&self) -> Vec<Arc<PhotoEntry>> {

@@ -3,6 +3,7 @@ mod facedet;
 mod faces;
 mod facestore;
 mod fastexif;
+mod janitor;
 mod keymap;
 mod metadata;
 mod preview;
@@ -1131,6 +1132,9 @@ pub fn run() {
             // Faces: a hand-edited settings.toml wins at launch; the DB copy
             // is the cross-process authority from here on.
             let _ = store.sync_faces_enabled_from_settings(cfg.faces.enabled);
+            // Cache budget: one delayed pass per launch, oldest folders first,
+            // never the folder open in this session.
+            janitor::spawn(store.clone(), preview.clone(), cfg.cache.max_mb);
             faces::spawn_worker(
                 app.handle().clone(),
                 preview.clone(),
