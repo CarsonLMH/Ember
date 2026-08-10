@@ -345,7 +345,7 @@ fn write_thumb(preview: &RgbImage, out: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn resize_rgb(src: &RgbImage, dw: u32, dh: u32) -> Result<RgbImage, String> {
+pub(crate) fn resize_rgb(src: &RgbImage, dw: u32, dh: u32) -> Result<RgbImage, String> {
     use fast_image_resize::images::Image;
     use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
 

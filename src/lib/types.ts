@@ -67,4 +67,10 @@ export interface PerfReport {
   missServes: number;
   coldOpenMs: number | null;
   generatedAt: string;
+  /** Journal-ack round trip for ratings issued during the storm (keypress →
+   * fsync'd verdict). Present when the storm ran with a rating callback. */
+  ackSamples?: number;
+  ackP50?: number;
+  ackP99?: number;
+  ackMax?: number;
 }

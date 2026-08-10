@@ -1,4 +1,6 @@
 mod exposure;
+mod facedet;
+mod faces;
 mod fastexif;
 mod keymap;
 mod metadata;
@@ -832,7 +834,15 @@ fn dev_flags() -> serde_json::Value {
         "verify": flag("EMBER_VERIFY"),
         "resumeTest": flag("EMBER_RESUME_TEST"),
         "zoomTest": flag("EMBER_ZOOMTEST"),
+        "facesForce": faces::force_enabled(),
     })
+}
+
+/// Slice-0 spike counters — lets the storm harness verify inference was
+/// genuinely active during the measured window (review-1 gate-integrity).
+#[tauri::command]
+fn faces_spike_stats() -> serde_json::Value {
+    faces::spike_stats()
 }
 
 #[tauri::command]
@@ -924,6 +934,11 @@ pub fn run() {
             let exiftool = Arc::new(xmp::Exiftool::new());
             xmp::spawn_queue_worker(app.handle().clone(), store.clone(), exiftool.clone());
             metadata::spawn_worker(store.clone(), preview.clone(), exiftool.clone());
+            // Slice-0 spike only: continuous detect→embed load for gate runs.
+            if faces::force_enabled() {
+                let models = faces::models_dir(app.path().resource_dir().ok());
+                faces::spawn_spike(preview.clone(), models);
+            }
             app.manage(AppState {
                 store,
                 preview,
@@ -967,6 +982,7 @@ pub fn run() {
             set_order,
             save_perf_report,
             dev_flags,
+            faces_spike_stats,
             quit_app,
             frontend_log
         ])

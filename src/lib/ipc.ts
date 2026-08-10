@@ -156,10 +156,30 @@ export interface DevFlags {
   verify: boolean;
   resumeTest: boolean;
   zoomTest: boolean;
+  facesForce: boolean;
 }
 
 export function devFlags(): Promise<DevFlags> {
   return invoke<DevFlags>('dev_flags');
+}
+
+/** Slice-0 faces spike counters — the storm harness reads these before and
+ * after the measured window to prove inference was genuinely active. */
+export interface FacesSpikeStats {
+  photos: number;
+  faces: number;
+  passes: number;
+  errors: number;
+  avgDecodeMs: number;
+  avgDetectMs: number;
+  avgEmbedMs: number;
+  avgTotalMs: number;
+  initMs: number;
+  rssMb: number;
+}
+
+export function facesSpikeStats(): Promise<FacesSpikeStats> {
+  return invoke<FacesSpikeStats>('faces_spike_stats');
 }
 
 export function quitApp(): Promise<void> {

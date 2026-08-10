@@ -1,4 +1,4 @@
-import { devFlags, frontendLog, quitApp } from './ipc';
+import { devFlags, facesSpikeStats, frontendLog, quitApp } from './ipc';
 import * as perf from './perf';
 import * as session from './session';
 import * as viewer from './viewer';
@@ -175,12 +175,34 @@ export async function runIfRequested(): Promise<void> {
     await sleep(30_000);
     const pre = session.getState();
     frontendLog('info', `pre-storm cursor=${pre.cursor}/${pre.photos.length}`);
-    const report = await perf.flipStorm();
+    // Faces gate runs (EMBER_FACES_FORCE=1): snapshot spike counters around
+    // the measured window — the storm only counts if inference was ACTIVE
+    // during it, never assumed (review-1 gate integrity).
+    const spikeBefore = flags.facesForce ? await facesSpikeStats().catch(() => null) : null;
+    const report = await perf.flipStorm(300, 80, (r) => session.rate(r, performance.now()));
     const post = session.getState();
     frontendLog('info', `post-storm cursor=${post.cursor}/${post.photos.length}`);
+    let spikeTag = '';
+    if (flags.facesForce) {
+      const s0 = spikeBefore;
+      const s1 = await facesSpikeStats().catch(() => null);
+      const active = !!(s0 && s1 && s1.photos > s0.photos);
+      spikeTag = ` facesSpike=${active ? 'ACTIVE' : 'NOT-ACTIVE'}`;
+      frontendLog(
+        'info',
+        `faces-spike during storm: photos ${s0?.photos ?? '?'}→${s1?.photos ?? '?'} ` +
+          `passes=${s1?.passes ?? '?'} avg=${s1?.avgTotalMs.toFixed(1) ?? '?'}ms ` +
+          `(decode=${s1?.avgDecodeMs.toFixed(1) ?? '?'} detect=${s1?.avgDetectMs.toFixed(1) ?? '?'} ` +
+          `embed=${s1?.avgEmbedMs.toFixed(1) ?? '?'}) faces=${s1?.faces ?? '?'} ` +
+          `errors=${s1?.errors ?? '?'} rss=${s1?.rssMb ?? '?'}MB`,
+      );
+    }
+    const ack = report.ackSamples
+      ? ` ack(n=${report.ackSamples} p50=${report.ackP50?.toFixed(1)} p99=${report.ackP99?.toFixed(1)} max=${report.ackMax?.toFixed(1)})`
+      : '';
     frontendLog(
       'info',
-      `storm done: p50=${report.p50.toFixed(1)} p99=${report.p99.toFixed(1)} max=${report.max.toFixed(1)} misses=${report.missServes}/${report.flips} coldOpen=${report.coldOpenMs?.toFixed(0)}ms`,
+      `storm done: p50=${report.p50.toFixed(1)} p99=${report.p99.toFixed(1)} max=${report.max.toFixed(1)} misses=${report.missServes}/${report.flips} coldOpen=${report.coldOpenMs?.toFixed(0)}ms${ack}${spikeTag}`,
     );
     await sleep(500);
     await quitApp();
