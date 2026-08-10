@@ -31,11 +31,18 @@ function FaceChip({
   faceIndex,
   size = 44,
   onJump,
+  onPress,
+  pressTitle,
+  selected = false,
 }: {
   photoId: string;
   faceIndex: number;
   size?: number;
   onJump?: (photoId: string) => void;
+  /** Overrides click (e.g. selection in the loose grid). */
+  onPress?: () => void;
+  pressTitle?: string;
+  selected?: boolean;
 }) {
   const [attempt, setAttempt] = useState(0);
   const alive = useRef(true);
@@ -45,15 +52,16 @@ function FaceChip({
       alive.current = false;
     };
   }, []);
+  const clickable = onPress ?? (onJump ? () => onJump(photoId) : undefined);
   return (
     <img
-      className={`face-chip${onJump ? ' face-chip-link' : ''}`}
+      className={`face-chip${clickable ? ' face-chip-link' : ''}${selected ? ' face-chip-selected' : ''}`}
       style={{ width: size, height: size }}
       src={`${faceChipUrl(photoId, faceIndex)}?r=${attempt}`}
       loading="lazy"
       alt=""
-      title={onJump ? 'Show this photo' : undefined}
-      onClick={onJump ? () => onJump(photoId) : undefined}
+      title={onPress ? pressTitle : onJump ? 'Show this photo' : undefined}
+      onClick={clickable}
       onError={() => {
         // Each miss enqueues a repair; on a wiped cache the preview must
         // regenerate first, so the tail retries stretch out (~30s total).
@@ -93,6 +101,8 @@ export default function PeoplePanel({
   const [persons, setPersons] = useState<PersonOut[] | null>(null);
   const [clusters, setClusters] = useState<FaceClusters | null>(null);
   const [showLoose, setShowLoose] = useState(false);
+  /** Selection in the loose grid — naming/dismissing works on this set. */
+  const [looseSelected, setLooseSelected] = useState<Set<number>>(new Set());
   const [expanded, setExpanded] = useState<number | null>(null);
   const [expandedFaces, setExpandedFaces] = useState<ChipRef[]>([]);
   const [renaming, setRenaming] = useState<number | null>(null);
@@ -210,8 +220,33 @@ export default function PeoplePanel({
     try {
       const n = await setFacesIgnored(ids, true);
       showUndo({ kind: 'dismiss', faceIds: ids, label: `Dismissed ${n} faces` });
+      setLooseSelected((prev) => {
+        const next = new Set(prev);
+        for (const id of ids) next.delete(id);
+        return next;
+      });
     } catch (e) {
       notify(String(e));
+    }
+    load();
+  };
+
+  /** Name the selected loose faces — "Nati" folds them into existing Nati,
+   * and the harder shots become confirmed references that improve future
+   * recognition (the sweep re-runs right after). */
+  const nameLoose = async (name: string) => {
+    const ids = [...looseSelected];
+    if (!name.trim() || !ids.length) return;
+    try {
+      const res = await faceSetName(ids, name);
+      showUndo({
+        kind: 'naming',
+        opId: res.opId,
+        label: `Named ${res.affectedFaceIds.length} faces “${res.person.name}”`,
+      });
+      setLooseSelected(new Set());
+    } catch (e) {
+      notify(`Naming failed — ${String(e)}`);
     }
     load();
   };
@@ -531,29 +566,95 @@ export default function PeoplePanel({
                   {showLoose ? 'hide' : 'show'} {clusters.loose.length} face
                   {clusters.loose.length === 1 ? '' : 's'} seen only once
                 </button>
-                <button
-                  className="people-dim"
-                  title="One-off strangers and junk detections — hide them all"
-                  onClick={() => void dismissLoose(clusters.loose.map((c) => c.faceId))}
-                >
-                  don't label any
-                </button>
+                {showLoose && (
+                  <span className="people-hint">
+                    <button
+                      className="people-dim"
+                      onClick={() =>
+                        setLooseSelected(new Set(clusters.loose.map((c) => c.faceId)))
+                      }
+                    >
+                      select all
+                    </button>
+                    {looseSelected.size > 0 && (
+                      <>
+                        {' · '}
+                        <button className="people-dim" onClick={() => setLooseSelected(new Set())}>
+                          none
+                        </button>
+                      </>
+                    )}
+                  </span>
+                )}
               </div>
               {showLoose && (
-                <div className="people-faces">
-                  {clusters.loose.map((chip) => (
-                    <span key={chip.faceId} className="people-face">
-                      <FaceChip photoId={chip.photoId} faceIndex={chip.faceIndex} onJump={onJump} />
-                      <button
-                        className="people-not"
-                        title="Don't label this face"
-                        onClick={() => void dismissLoose([chip.faceId])}
-                      >
-                        ✕
-                      </button>
-                    </span>
-                  ))}
-                </div>
+                <>
+                  <div className="people-faces">
+                    {clusters.loose.map((chip) => (
+                      <span key={chip.faceId} className="people-face">
+                        <FaceChip
+                          photoId={chip.photoId}
+                          faceIndex={chip.faceIndex}
+                          selected={looseSelected.has(chip.faceId)}
+                          pressTitle="Select this face"
+                          onPress={() =>
+                            setLooseSelected((prev) => {
+                              const next = new Set(prev);
+                              if (!next.delete(chip.faceId)) next.add(chip.faceId);
+                              return next;
+                            })
+                          }
+                        />
+                        <button
+                          className="people-not"
+                          title="Don't label this face"
+                          onClick={() => void dismissLoose([chip.faceId])}
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  {looseSelected.size > 0 && (
+                    <>
+                      <div className="people-cluster-row">
+                        <span className="people-hint">{looseSelected.size} selected</span>
+                        <span className="people-toast-btns">
+                          {looseSelected.size === 1 && (
+                            <button
+                              className="people-dim"
+                              onClick={() => {
+                                const id = [...looseSelected][0];
+                                const chip = clusters.loose.find((c) => c.faceId === id);
+                                if (chip) onJump(chip.photoId);
+                              }}
+                            >
+                              show photo
+                            </button>
+                          )}
+                          <button
+                            className="people-dim"
+                            title="The selected faces aren't people you'll label"
+                            onClick={() => void dismissLoose([...looseSelected])}
+                          >
+                            don't label selected
+                          </button>
+                        </span>
+                      </div>
+                      <input
+                        className="people-input"
+                        placeholder={`Who is this? (names ${looseSelected.size} selected)`}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            const input = e.target as HTMLInputElement;
+                            void nameLoose(input.value);
+                            input.value = '';
+                          }
+                        }}
+                      />
+                    </>
+                  )}
+                </>
               )}
             </div>
           )}

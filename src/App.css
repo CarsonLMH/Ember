@@ -564,6 +564,10 @@ kbd {
   outline: 2px solid #567;
 }
 
+.face-chip-selected {
+  outline: 2px solid #7a9;
+}
+
 .people-more {
   align-self: center;
   background: none;
