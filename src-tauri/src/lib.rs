@@ -937,8 +937,22 @@ fn rename_person(
     state: tauri::State<'_, AppState>,
     person_id: i64,
     name: String,
-) -> Result<(), String> {
+) -> Result<facestore::RenameOutcome, String> {
     state.store.rename_person(person_id, &name)
+}
+
+/// Explicit user act, offered by the UI when a rename collides ("Nai" was a
+/// typo for "Nati"). Pulled forward from Slice D on first-acceptance feedback.
+#[tauri::command]
+fn merge_persons(
+    state: tauri::State<'_, AppState>,
+    source_id: i64,
+    target_id: i64,
+) -> Result<usize, String> {
+    state
+        .store
+        .merge_persons(source_id, target_id)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1178,6 +1192,7 @@ pub fn run() {
             face_assign,
             face_reject,
             rename_person,
+            merge_persons,
             list_persons,
             person_faces,
             person_map,

@@ -259,8 +259,17 @@ export function faceReject(faceId: number, personId: number): Promise<void> {
   return invoke('face_reject', { faceId, personId });
 }
 
-export function renamePerson(personId: number, name: string): Promise<void> {
-  return invoke('rename_person', { personId, name });
+/** A collision is a merge offer, not an error (typo'd the same person twice). */
+export type RenameOutcome =
+  | { status: 'renamed' }
+  | { status: 'conflict'; targetId: number; targetName: string };
+
+export function renamePerson(personId: number, name: string): Promise<RenameOutcome> {
+  return invoke<RenameOutcome>('rename_person', { personId, name });
+}
+
+export function mergePersons(sourceId: number, targetId: number): Promise<number> {
+  return invoke<number>('merge_persons', { sourceId, targetId });
 }
 
 export function listPersons(folderId: number): Promise<PersonOut[]> {

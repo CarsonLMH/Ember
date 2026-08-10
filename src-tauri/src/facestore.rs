@@ -487,6 +487,19 @@ pub struct NamingResult {
     pub affected_face_ids: Vec<i64>,
 }
 
+/// Rename result: a name collision is data, not an error — the UI turns it
+/// into a merge offer.
+#[derive(Debug, Clone, Serialize)]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "status"
+)]
+pub enum RenameOutcome {
+    Renamed,
+    Conflict { target_id: i64, target_name: String },
+}
+
 // ---------- Store methods (command layer, mutex connection) ----------
 
 impl Store {
@@ -788,6 +801,14 @@ impl Store {
                 )?;
             }
         }
+        // An explicit user assignment to X overrides a stale "not X" — the
+        // user changed their mind; the contradiction must not linger.
+        if let Some(new_person) = person_id {
+            tx.execute(
+                "DELETE FROM face_person_rejections WHERE face_id = ?1 AND person_id = ?2",
+                params![face_id, new_person],
+            )?;
+        }
         bump_revision(&tx, &photo_id)?;
         tx.commit()?;
         Ok(())
@@ -818,32 +839,82 @@ impl Store {
         Ok(())
     }
 
-    /// Inline rename. Colliding with another person's normalized name is an
-    /// error for now — merging is a deliberate act (Slice D's merge_persons).
-    pub fn rename_person(&self, person_id: i64, name: &str) -> Result<(), String> {
+    /// Inline rename. Renaming onto another person's normalized name is not
+    /// an error — it reports the collision so the UI can offer a merge (the
+    /// "typo'd the same person twice" case).
+    pub fn rename_person(&self, person_id: i64, name: &str) -> Result<RenameOutcome, String> {
         let display = name.trim();
         let norm = display.to_lowercase();
         if norm.is_empty() {
             return Err("name cannot be empty".into());
         }
         let conn = self.lock_conn();
-        let clash: Option<i64> = conn
+        let clash: Option<(i64, String)> = conn
             .query_row(
-                "SELECT id FROM persons WHERE name_norm = ?1 AND id <> ?2",
+                "SELECT id, name FROM persons WHERE name_norm = ?1 AND id <> ?2",
                 params![norm, person_id],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()
             .map_err(|e| e.to_string())?;
-        if clash.is_some() {
-            return Err(format!("\"{display}\" already exists"));
+        if let Some((target_id, target_name)) = clash {
+            return Ok(RenameOutcome::Conflict {
+                target_id,
+                target_name,
+            });
         }
         conn.execute(
             "UPDATE persons SET name = ?2, name_norm = ?3 WHERE id = ?1",
             params![person_id, display, norm],
         )
         .map_err(|e| e.to_string())?;
-        Ok(())
+        Ok(RenameOutcome::Renamed)
+    }
+
+    /// Merge every face (and rejection) of `source` into `target`, then
+    /// remove `source`. An explicit user act: moved faces keep 'user'
+    /// provenance, and any "not target" rejection on a moved face is dropped
+    /// (the merge asserts they ARE target). Returns moved face count.
+    pub fn merge_persons(&self, source_id: i64, target_id: i64) -> rusqlite::Result<usize> {
+        let mut conn = self.lock_conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let photos: Vec<String> = {
+            let mut stmt =
+                tx.prepare("SELECT DISTINCT photo_id FROM faces WHERE person_id = ?1")?;
+            let v: Vec<String> = stmt
+                .query_map(params![source_id], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            v
+        };
+        tx.execute(
+            "DELETE FROM face_person_rejections WHERE person_id = ?2
+             AND face_id IN (SELECT id FROM faces WHERE person_id = ?1)",
+            params![source_id, target_id],
+        )?;
+        let moved = tx.execute(
+            "UPDATE faces SET person_id = ?2 WHERE person_id = ?1",
+            params![source_id, target_id],
+        )?;
+        // Re-key "not source" rejections to the surviving person — except on
+        // faces explicitly assigned to the target, where the assignment is
+        // the newer truth and a re-keyed rejection would contradict it.
+        tx.execute(
+            "INSERT OR IGNORE INTO face_person_rejections (face_id, person_id, created_at)
+             SELECT face_id, ?2, created_at FROM face_person_rejections
+             WHERE person_id = ?1
+               AND face_id NOT IN (SELECT id FROM faces WHERE person_id = ?2)",
+            params![source_id, target_id],
+        )?;
+        tx.execute(
+            "DELETE FROM face_person_rejections WHERE person_id = ?1",
+            params![source_id],
+        )?;
+        tx.execute("DELETE FROM persons WHERE id = ?1", params![source_id])?;
+        for pid in &photos {
+            bump_revision(&tx, pid)?;
+        }
+        tx.commit()?;
+        Ok(moved)
     }
 
     /// All persons (global records) with folder-scoped counts.
@@ -1477,15 +1548,87 @@ mod tests {
     }
 
     #[test]
-    fn rename_person_guards_collisions() {
+    fn rename_reports_conflict_for_merge_offer() {
         let (store, mut worker, _, _) = setup();
         let (_, ids) = seed_faces(&mut worker);
         let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
-        store.face_set_name(&ids[1..], "Dani").unwrap();
-        store.rename_person(nati.person.id, "Natalie").unwrap();
-        assert!(
-            store.rename_person(nati.person.id, "dani").is_err(),
-            "collision with another person is an explicit error (merge is Slice D)"
-        );
+        let (dani, _) = store.face_set_name(&ids[1..], "Dani").unwrap();
+        assert!(matches!(
+            store.rename_person(nati.person.id, "Natalie").unwrap(),
+            RenameOutcome::Renamed
+        ));
+        // Colliding rename (case-insensitive) is a merge offer, not an error.
+        match store.rename_person(nati.person.id, "dani").unwrap() {
+            RenameOutcome::Conflict {
+                target_id,
+                target_name,
+            } => {
+                assert_eq!(target_id, dani.person.id);
+                assert_eq!(target_name, "Dani");
+            }
+            other => panic!("expected conflict, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn merge_persons_moves_faces_rekeys_rejections_drops_contradictions() {
+        let (store, mut worker, folder_id, _) = setup();
+        let (_, ids) = seed_faces(&mut worker);
+        // "Nai" (typo, face 1) and "Nati" (face 2).
+        let (nai, _) = store.face_set_name(&ids[..1], "Nai").unwrap();
+        let (nati, _) = store.face_set_name(&ids[1..], "Nati").unwrap();
+        // Face 1 once got "not Nati" (before the user realized Nai==Nati),
+        // plus a "not Nai" from some third face's history — via face 2.
+        store.face_reject(ids[0], nati.person.id).unwrap();
+        // face_reject cleared nothing (face 1 is Nai's), but re-assert it:
+        store.face_assign(ids[0], Some(nai.person.id)).unwrap();
+        store.face_reject(ids[1], nai.person.id).unwrap();
+        store.face_assign(ids[1], Some(nati.person.id)).unwrap();
+
+        let moved = store.merge_persons(nai.person.id, nati.person.id).unwrap();
+        assert_eq!(moved, 1);
+        let persons = store.list_persons(folder_id).unwrap();
+        assert_eq!(persons.len(), 1, "source person removed");
+        assert_eq!(persons[0].id, nati.person.id);
+        assert_eq!(persons[0].folder_count, 2, "faces moved to the survivor");
+        // The moved face's "not Nati" contradiction is gone — the merge
+        // asserts they ARE Nati.
+        let conn = store.lock_conn();
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM face_person_rejections WHERE person_id = ?1",
+                params![nati.person.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 0, "no rejection may target the merged identity's faces");
+        let orphaned: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM face_person_rejections WHERE person_id = ?1",
+                params![nai.person.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphaned, 0, "source rejections re-keyed or removed");
+    }
+
+    #[test]
+    fn user_assignment_clears_stale_not_x() {
+        let (store, mut worker, _, _) = setup();
+        let (_, ids) = seed_faces(&mut worker);
+        let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
+        store.face_reject(ids[0], nati.person.id).unwrap(); // "not Nati"
+                                                            // The user changes their mind: explicit re-assign to Nati.
+        store.face_assign(ids[0], Some(nati.person.id)).unwrap();
+        let conn = store.lock_conn();
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM face_person_rejections
+                 WHERE face_id = ?1 AND person_id = ?2",
+                params![ids[0], nati.person.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 0, "explicit assignment drops the contradiction");
     }
 }

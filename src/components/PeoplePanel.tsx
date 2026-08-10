@@ -7,6 +7,7 @@ import {
   faceScanStatus,
   faceSetName,
   listPersons,
+  mergePersons,
   onFacesProgress,
   personFaces,
   renamePerson,
@@ -67,6 +68,11 @@ export default function PeoplePanel({
   const [expanded, setExpanded] = useState<number | null>(null);
   const [expandedFaces, setExpandedFaces] = useState<ChipRef[]>([]);
   const [renaming, setRenaming] = useState<number | null>(null);
+  const [mergePrompt, setMergePrompt] = useState<{
+    source: PersonOut;
+    targetId: number;
+    targetName: string;
+  } | null>(null);
   const [undoToast, setUndoToast] = useState<UndoToast | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -136,10 +142,28 @@ export default function PeoplePanel({
     setRenaming(null);
     if (!name.trim() || name.trim() === person.name) return;
     try {
-      await renamePerson(person.id, name);
+      const outcome = await renamePerson(person.id, name);
+      if (outcome.status === 'conflict') {
+        // Typo'd the same person twice — offer to merge instead of erroring.
+        setMergePrompt({ source: person, targetId: outcome.targetId, targetName: outcome.targetName });
+      }
     } catch (e) {
       notify(String(e));
     }
+    load();
+  };
+
+  const merge = async () => {
+    if (!mergePrompt) return;
+    const { source, targetId, targetName } = mergePrompt;
+    setMergePrompt(null);
+    try {
+      const moved = await mergePersons(source.id, targetId);
+      notify(`Merged “${source.name}” into “${targetName}” (${moved} faces)`);
+    } catch (e) {
+      notify(String(e));
+    }
+    setExpanded(null);
     load();
   };
 
@@ -197,10 +221,30 @@ export default function PeoplePanel({
         </div>
       ) : (
         <>
-          {scanning && status && (
-            <div className="people-progress">
-              Scanning faces… {status.scanned}/{status.total}
-              {status.errors > 0 ? ` (${status.errors} failed)` : ''}
+          {status &&
+            (scanning ? (
+              <div className="people-progress">
+                Scanning faces… {status.scanned}/{status.total}
+                {status.errors > 0 ? ` (${status.errors} failed)` : ''}
+              </div>
+            ) : (
+              status.total > 0 && (
+                <div className="people-hint">
+                  All {status.total} photos indexed
+                  {status.errors > 0 ? ` (${status.errors} failed)` : ''}
+                </div>
+              )
+            ))}
+
+          {mergePrompt && (
+            <div className="people-toast">
+              <span>
+                Merge “{mergePrompt.source.name}” into “{mergePrompt.targetName}”?
+              </span>
+              <span className="people-toast-btns">
+                <button onClick={() => void merge()}>Merge</button>
+                <button onClick={() => setMergePrompt(null)}>Cancel</button>
+              </span>
             </div>
           )}
 
@@ -285,9 +329,12 @@ export default function PeoplePanel({
                     <span className="people-more">+{c.size - c.chips.length}</span>
                   )}
                 </div>
+                <div className="people-hint">
+                  seen in {c.photoCount} photo{c.photoCount === 1 ? '' : 's'}
+                </div>
                 <input
                   className="people-input"
-                  placeholder={`Name ${c.size} faces in ${c.photoCount} photos…`}
+                  placeholder="Who is this?"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       const input = e.target as HTMLInputElement;
@@ -308,19 +355,25 @@ export default function PeoplePanel({
           )}
 
           <div className="people-footer">
-            <button onClick={() => void toggleEnabled()}>Pause indexing</button>
             {confirmDelete ? (
-              <span className="people-confirm">
-                Wipe all faces &amp; names, turn indexing off?
-                <button className="people-danger" onClick={() => void deleteAll()}>
-                  Delete
-                </button>
-                <button onClick={() => setConfirmDelete(false)}>Keep</button>
-              </span>
+              <div className="people-confirm">
+                <span>Wipe all faces &amp; names? Indexing turns off.</span>
+                <span className="people-toast-btns">
+                  <button className="people-danger" onClick={() => void deleteAll()}>
+                    Delete
+                  </button>
+                  <button onClick={() => setConfirmDelete(false)}>Keep</button>
+                </span>
+              </div>
             ) : (
-              <button className="people-danger" onClick={() => setConfirmDelete(true)}>
-                Delete all face data
-              </button>
+              <>
+                <button onClick={() => void toggleEnabled()}>
+                  {scanning ? 'Pause indexing' : 'Turn off indexing'}
+                </button>
+                <button className="people-danger" onClick={() => setConfirmDelete(true)}>
+                  Delete all face data
+                </button>
+              </>
             )}
           </div>
         </>
