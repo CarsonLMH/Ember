@@ -1112,6 +1112,43 @@ impl Store {
         Ok(())
     }
 
+    /// Suppress faces entirely — statues, faces inside photographed
+    /// photos, strangers the user will never label. Ignored faces leave
+    /// clusters, counts, prototypes and every auto path (all filter on
+    /// ignored = 0); rows and chips stay so this is cheaply reversible.
+    pub fn set_faces_ignored(&self, face_ids: &[i64], ignored: bool) -> rusqlite::Result<usize> {
+        let mut conn = self.lock_conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut photos: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut changed = 0usize;
+        for &fid in face_ids {
+            let photo: Option<String> = tx
+                .query_row(
+                    "SELECT photo_id FROM faces WHERE id = ?1",
+                    params![fid],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let Some(photo_id) = photo else {
+                continue; // replaced by a concurrent rescan — nothing to do
+            };
+            changed += tx.execute(
+                "UPDATE faces SET ignored = ?2,
+                        person_id = CASE WHEN ?2 THEN NULL ELSE person_id END,
+                        assigned_by = CASE WHEN ?2 THEN NULL ELSE assigned_by END,
+                        similarity = CASE WHEN ?2 THEN NULL ELSE similarity END
+                 WHERE id = ?1",
+                params![fid, ignored],
+            )?;
+            photos.insert(photo_id);
+        }
+        for pid in &photos {
+            bump_revision(&tx, pid)?;
+        }
+        tx.commit()?;
+        Ok(changed)
+    }
+
     /// Durable "not X": no auto path may ever re-pair this face and person.
     /// Clears the assignment if it currently points at that person.
     pub fn face_reject(&self, face_id: i64, person_id: i64) -> rusqlite::Result<()> {
@@ -2042,6 +2079,66 @@ mod tests {
             .person_id
             .is_none());
         assert!(store.list_persons(folder_id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn ignored_faces_leave_every_surface_and_come_back() {
+        let (store, mut worker, folder_id, _) = setup();
+        let (gen, nati, _) = seed_recognition(&store, &mut worker);
+        // Ignore Nati's confirmed face + p2's unassigned lookalike (a
+        // "statue/stranger cluster dismiss").
+        let p2_face = store.faces_for_photo("p2").unwrap().unwrap()[0].face_id;
+        let nati_face: i64 = {
+            let conn = store.lock_conn();
+            conn.query_row(
+                "SELECT id FROM faces WHERE person_id = ?1",
+                params![nati],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            store
+                .set_faces_ignored(&[nati_face, p2_face], true)
+                .unwrap(),
+            2
+        );
+
+        // Gone from counts, prototypes, clusters and the sweep.
+        let persons = store.list_persons(folder_id).unwrap();
+        let nati_row = persons.iter().find(|p| p.id == nati).unwrap();
+        assert_eq!(nati_row.folder_count, 0, "ignoring clears the assignment");
+        assert!(
+            person_prototypes(&worker, gen, 5)
+                .unwrap()
+                .iter()
+                .all(|p| p.person_id != nati),
+            "ignored faces never train prototypes"
+        );
+        let protos = person_prototypes(&worker, gen, 5).unwrap();
+        assert_eq!(
+            sweep_photo(&mut worker, "p2", gen, &protos, 0.0, 0.0).unwrap(),
+            0,
+            "ignored faces are invisible to the sweep"
+        );
+        assert!(store
+            .face_clusters(folder_id, 0.0)
+            .unwrap()
+            .iter()
+            .all(|c| !c.face_ids.contains(&p2_face)));
+
+        // Reversible: un-ignore returns the face to Unnamed (not to Nati —
+        // the assignment was deliberately dropped).
+        store.set_faces_ignored(&[nati_face], false).unwrap();
+        let f = store
+            .faces_for_photo("p1")
+            .unwrap()
+            .unwrap()
+            .into_iter()
+            .find(|f| f.face_id == nati_face)
+            .unwrap();
+        assert!(!f.ignored);
+        assert_eq!(f.person_id, None);
     }
 
     #[test]

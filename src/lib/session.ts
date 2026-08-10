@@ -520,6 +520,16 @@ export function onManualZoomChange(): void {
 // ---------- navigation ----------
 
 /** Jump to an absolute position in the visible list (Home/End, strip clicks). */
+/** Put the cursor on a specific photo (People panel chip → context). */
+export function jumpToPhotoId(id: string): void {
+  const idx = state.photos.findIndex((p) => p.id === id);
+  if (idx >= 0) {
+    jumpTo(idx);
+  } else if (state.all.some((p) => p.id === id)) {
+    showNotice('That photo is hidden by the current filter');
+  }
+}
+
 export function jumpTo(index: number): void {
   const { photos } = state;
   if (!photos.length) return;

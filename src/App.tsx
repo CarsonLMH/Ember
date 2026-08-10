@@ -661,6 +661,7 @@ export default function App() {
           trashedCount={state.trashedCount}
           onClose={() => setShowPeople(false)}
           notify={(m) => session.notify(m)}
+          onJump={(id) => session.jumpToPhotoId(id)}
         />
       )}
       {showCheat && <CheatSheet onClose={() => setShowCheat(false)} />}

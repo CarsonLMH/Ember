@@ -26,7 +26,10 @@ impl Default for FacesCfg {
             enabled: true,
             auto_assign_threshold: 0.45,
             auto_assign_margin: 0.08,
-            cluster_threshold: 0.45,
+            // 0.45 let junky detections (turned heads) bridge two people into
+            // one cluster on real photos; 0.50 fragments instead — cheap,
+            // since naming both fragments the same name merges them.
+            cluster_threshold: 0.50,
             min_det_score: 0.8,
         }
     }
@@ -67,7 +70,7 @@ fn default_file_contents() -> String {
      enabled = true\n\
      # Detection confidence floor (0-1) and clustering similarity threshold.\n\
      min_det_score = 0.8\n\
-     cluster_threshold = 0.45\n\
+     cluster_threshold = 0.5\n\
      # Auto-recognition thresholds (calibrated on real photos 2026-08).\n\
      auto_assign_threshold = 0.45\n\
      auto_assign_margin = 0.08\n\n\
@@ -252,7 +255,7 @@ mod tests {
         let f = load(&dir).faces;
         assert!(f.enabled);
         assert!((f.auto_assign_threshold - 0.45).abs() < 1e-6);
-        assert!((f.cluster_threshold - 0.45).abs() < 1e-6);
+        assert!((f.cluster_threshold - 0.50).abs() < 1e-6);
         // Partial override; out-of-range values fall back to defaults.
         std::fs::write(
             dir.join("settings.toml"),

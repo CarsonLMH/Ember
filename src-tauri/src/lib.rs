@@ -980,6 +980,20 @@ fn rename_person(
     state.store.rename_person(person_id, &name)
 }
 
+/// "Not a person / don't label" — statues, archival prints, strangers.
+/// Pulled forward from Slice D on museum-folder feedback.
+#[tauri::command]
+fn set_faces_ignored(
+    state: tauri::State<'_, AppState>,
+    face_ids: Vec<i64>,
+    ignored: bool,
+) -> Result<usize, String> {
+    state
+        .store
+        .set_faces_ignored(&face_ids, ignored)
+        .map_err(|e| e.to_string())
+}
+
 /// Explicit user act, offered by the UI when a rename collides ("Nai" was a
 /// typo for "Nati"). Pulled forward from Slice D on first-acceptance feedback.
 #[tauri::command]
@@ -1235,6 +1249,7 @@ pub fn run() {
             face_reject,
             rename_person,
             merge_persons,
+            set_faces_ignored,
             list_persons,
             person_faces,
             person_map,

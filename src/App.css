@@ -561,6 +561,25 @@ kbd {
   font-size: 11px;
 }
 
+.face-chip-link {
+  cursor: pointer;
+}
+
+.face-chip-link:hover {
+  outline: 2px solid #567;
+}
+
+.people-excluded img {
+  opacity: 0.3;
+}
+
+.people-cluster-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .people-confirm {
   display: flex;
   flex-direction: column;

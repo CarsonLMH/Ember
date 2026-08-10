@@ -272,6 +272,11 @@ export function mergePersons(sourceId: number, targetId: number): Promise<number
   return invoke<number>('merge_persons', { sourceId, targetId });
 }
 
+/** "Not a person / don't label": statues, archival prints, strangers. */
+export function setFacesIgnored(faceIds: number[], ignored: boolean): Promise<number> {
+  return invoke<number>('set_faces_ignored', { faceIds, ignored });
+}
+
 export function listPersons(folderId: number): Promise<PersonOut[]> {
   return invoke<PersonOut[]>('list_persons', { folderId });
 }

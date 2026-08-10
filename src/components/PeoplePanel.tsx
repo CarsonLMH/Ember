@@ -13,6 +13,7 @@ import {
   personFaces,
   renamePerson,
   setFacesEnabled,
+  setFacesIgnored,
   undoNaming,
   type ChipRef,
   type FaceCluster,
@@ -21,8 +22,20 @@ import {
 } from '../lib/ipc';
 
 /** Chip img with the 404-retry pattern: the face route enqueues a repair on
- * miss and the retry query busts WebKit's negative cache when it lands. */
-function FaceChip({ photoId, faceIndex, size = 44 }: { photoId: string; faceIndex: number; size?: number }) {
+ * miss and the retry query busts WebKit's negative cache when it lands.
+ * Clicking jumps the viewer to the photo — the cheapest possible answer to
+ * "who IS this?": full context, zero new UI. */
+function FaceChip({
+  photoId,
+  faceIndex,
+  size = 44,
+  onJump,
+}: {
+  photoId: string;
+  faceIndex: number;
+  size?: number;
+  onJump?: (photoId: string) => void;
+}) {
   const [attempt, setAttempt] = useState(0);
   const alive = useRef(true);
   useEffect(() => {
@@ -33,11 +46,13 @@ function FaceChip({ photoId, faceIndex, size = 44 }: { photoId: string; faceInde
   }, []);
   return (
     <img
-      className="face-chip"
+      className={`face-chip${onJump ? ' face-chip-link' : ''}`}
       style={{ width: size, height: size }}
       src={`${faceChipUrl(photoId, faceIndex)}?r=${attempt}`}
       loading="lazy"
       alt=""
+      title={onJump ? 'Show this photo' : undefined}
+      onClick={onJump ? () => onJump(photoId) : undefined}
       onError={() => {
         // Each miss enqueues a repair; on a wiped cache the preview must
         // regenerate first, so the tail retries stretch out (~30s total).
@@ -54,22 +69,24 @@ function FaceChip({ photoId, faceIndex, size = 44 }: { photoId: string; faceInde
   );
 }
 
-interface UndoToast {
-  opId: number;
-  label: string;
-}
+type UndoToast =
+  | { kind: 'naming'; opId: number; label: string }
+  | { kind: 'dismiss'; faceIds: number[]; label: string };
 
 export default function PeoplePanel({
   folderId,
   trashedCount,
   onClose,
   notify,
+  onJump,
 }: {
   folderId: number;
   /** Trash/restore/undo change folder-scoped counts — reload when it moves. */
   trashedCount: number;
   onClose: () => void;
   notify: (msg: string) => void;
+  /** Move the culling cursor to a photo (chip click → context). */
+  onJump: (photoId: string) => void;
 }) {
   const [status, setStatus] = useState<FaceScanStatus | null>(null);
   const [persons, setPersons] = useState<PersonOut[] | null>(null);
@@ -77,6 +94,8 @@ export default function PeoplePanel({
   const [expanded, setExpanded] = useState<number | null>(null);
   const [expandedFaces, setExpandedFaces] = useState<ChipRef[]>([]);
   const [renaming, setRenaming] = useState<number | null>(null);
+  /** Faces the user ✕'d out of a mixed cluster before naming it. */
+  const [excluded, setExcluded] = useState<Set<number>>(new Set());
   const [mergePrompt, setMergePrompt] = useState<{
     source: PersonOut;
     targetId: number;
@@ -121,28 +140,49 @@ export default function PeoplePanel({
     void personFaces(expanded, folderId).then(setExpandedFaces).catch(() => {});
   }, [expanded, folderId]);
 
-  const showUndo = (opId: number, label: string) => {
-    setUndoToast({ opId, label });
+  const showUndo = (toast: UndoToast) => {
+    setUndoToast(toast);
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setUndoToast(null), 10_000);
   };
 
   const nameCluster = async (cluster: FaceCluster, name: string) => {
     if (!name.trim()) return;
+    const ids = cluster.faceIds.filter((id) => !excluded.has(id));
+    if (!ids.length) return;
     try {
-      const res = await faceSetName(cluster.faceIds, name);
-      showUndo(res.opId, `Named ${res.affectedFaceIds.length} faces “${res.person.name}”`);
+      const res = await faceSetName(ids, name);
+      showUndo({
+        kind: 'naming',
+        opId: res.opId,
+        label: `Named ${res.affectedFaceIds.length} faces “${res.person.name}”`,
+      });
     } catch (e) {
       notify(`Naming failed — ${String(e)}`);
     }
     load();
   };
 
-  const undo = async (opId: number) => {
+  const dismissCluster = async (cluster: FaceCluster) => {
+    try {
+      const n = await setFacesIgnored(cluster.faceIds, true);
+      showUndo({ kind: 'dismiss', faceIds: cluster.faceIds, label: `Dismissed ${n} faces` });
+    } catch (e) {
+      notify(String(e));
+    }
+    load();
+  };
+
+  const undo = async (toast: UndoToast) => {
     setUndoToast(null);
     try {
-      const n = await undoNaming(opId);
-      notify(n > 0 ? `Naming undone (${n} faces restored)` : 'Nothing to undo — later edits win');
+      if (toast.kind === 'naming') {
+        const n = await undoNaming(toast.opId);
+        notify(n > 0 ? `Naming undone (${n} faces restored)` : 'Nothing to undo — later edits win');
+      } else {
+        await setFacesIgnored(toast.faceIds, false);
+        notify('Dismissed faces restored to Unnamed');
+      }
     } catch (e) {
       notify(String(e));
     }
@@ -319,7 +359,7 @@ export default function PeoplePanel({
                     <div className="people-faces">
                       {expandedFaces.map((f) => (
                         <span key={f.faceId} className="people-face">
-                          <FaceChip photoId={f.photoId} faceIndex={f.faceIndex} />
+                          <FaceChip photoId={f.photoId} faceIndex={f.faceIndex} onJump={onJump} />
                           <button
                             className="people-not"
                             title={`Not ${p.name}`}
@@ -348,14 +388,45 @@ export default function PeoplePanel({
               <li key={c.faceIds[0]} className="people-cluster">
                 <div className="people-faces">
                   {c.chips.map((chip) => (
-                    <FaceChip key={chip.faceId} photoId={chip.photoId} faceIndex={chip.faceIndex} />
+                    <span
+                      key={chip.faceId}
+                      className={`people-face${excluded.has(chip.faceId) ? ' people-excluded' : ''}`}
+                    >
+                      <FaceChip photoId={chip.photoId} faceIndex={chip.faceIndex} onJump={onJump} />
+                      <button
+                        className="people-not"
+                        title={
+                          excluded.has(chip.faceId)
+                            ? 'Include in naming again'
+                            : 'Not the same person — leave out when naming'
+                        }
+                        onClick={() =>
+                          setExcluded((prev) => {
+                            const next = new Set(prev);
+                            if (!next.delete(chip.faceId)) next.add(chip.faceId);
+                            return next;
+                          })
+                        }
+                      >
+                        ✕
+                      </button>
+                    </span>
                   ))}
                   {c.size > c.chips.length && (
                     <span className="people-more">+{c.size - c.chips.length}</span>
                   )}
                 </div>
-                <div className="people-hint">
-                  seen in {c.photoCount} photo{c.photoCount === 1 ? '' : 's'}
+                <div className="people-cluster-row">
+                  <span className="people-hint">
+                    seen in {c.photoCount} photo{c.photoCount === 1 ? '' : 's'}
+                  </span>
+                  <button
+                    className="people-dim"
+                    title="Statues, photos of photos, people you'll never label — hide this group"
+                    onClick={() => void dismissCluster(c)}
+                  >
+                    not a person / don't label
+                  </button>
                 </div>
                 <input
                   className="people-input"
@@ -375,7 +446,7 @@ export default function PeoplePanel({
           {undoToast && (
             <div className="people-toast">
               <span>{undoToast.label}</span>
-              <button onClick={() => void undo(undoToast.opId)}>Undo</button>
+              <button onClick={() => void undo(undoToast)}>Undo</button>
             </div>
           )}
 
