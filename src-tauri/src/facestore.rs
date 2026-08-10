@@ -1390,6 +1390,19 @@ impl Store {
         Ok(count.unwrap_or(0))
     }
 
+    /// Hide a person from the People list and the filter switcher. UI-only:
+    /// their faces keep their labels, badges still name them, and matching
+    /// still recognizes them — this is "stop cluttering my lists", not
+    /// "forget who this is" (that's delete_person).
+    pub fn set_person_hidden(&self, person_id: i64, hidden: bool) -> rusqlite::Result<()> {
+        let conn = self.lock_conn();
+        conn.execute(
+            "UPDATE persons SET hidden = ?2 WHERE id = ?1",
+            params![person_id, hidden],
+        )?;
+        Ok(())
+    }
+
     /// Remove a person entirely: their faces return to Unnamed and every
     /// rejection naming them is dropped. Used by the gate harness for
     /// guaranteed teardown (undo alone can't promise it — undo deliberately
@@ -2231,6 +2244,47 @@ mod tests {
             .unwrap();
         assert!(!f.ignored);
         assert_eq!(f.person_id, None);
+    }
+
+    #[test]
+    fn hiding_a_person_is_ui_only() {
+        let (store, mut worker, folder_id, _) = setup();
+        let (gen, ids) = seed_faces(&mut worker);
+        let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
+        store.set_person_hidden(nati.person.id, true).unwrap();
+
+        let p = store
+            .list_persons(folder_id)
+            .unwrap()
+            .into_iter()
+            .find(|p| p.id == nati.person.id)
+            .unwrap();
+        assert!(p.hidden, "listed as hidden so the panel can group them");
+        assert_eq!(p.folder_count, 1, "faces are untouched");
+        // Still labelled on the photo and still a matching prototype: hiding
+        // is decluttering, not forgetting.
+        assert_eq!(
+            store.faces_for_photo("p1").unwrap().unwrap()[0]
+                .person_name
+                .as_deref(),
+            Some("Nati")
+        );
+        assert!(person_prototypes(&worker, gen, 5)
+            .unwrap()
+            .iter()
+            .any(|pr| pr.person_id == nati.person.id));
+        assert!(store.person_map(folder_id).unwrap().contains_key("p1"));
+
+        store.set_person_hidden(nati.person.id, false).unwrap();
+        assert!(
+            !store
+                .list_persons(folder_id)
+                .unwrap()
+                .into_iter()
+                .find(|p| p.id == nati.person.id)
+                .unwrap()
+                .hidden
+        );
     }
 
     #[test]

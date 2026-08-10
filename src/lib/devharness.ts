@@ -9,6 +9,7 @@ import {
   personMap,
   quitApp,
 } from './ipc';
+import * as keys from './keys';
 import * as perf from './perf';
 import * as session from './session';
 import * as viewer from './viewer';
@@ -281,9 +282,14 @@ export async function runIfRequested(): Promise<void> {
     const ack = report.ackSamples
       ? ` ack(n=${report.ackSamples} p50=${report.ackP50?.toFixed(1)} p99=${report.ackP99?.toFixed(1)} max=${report.ackMax?.toFixed(1)})`
       : '';
+    // A storm that recorded NO flips measured nothing — it once "passed"
+    // with misses=0/0 because the keyboard path was dead while the rating
+    // callback (which calls session.rate directly) still worked. The gate
+    // greps stormOk, so silence can never look like success.
+    const stormOk = report.flips > 0 && report.p99 <= 50 && report.missServes === 0;
     frontendLog(
       'info',
-      `storm done: p50=${report.p50.toFixed(1)} p99=${report.p99.toFixed(1)} max=${report.max.toFixed(1)} misses=${report.missServes}/${report.flips} coldOpen=${report.coldOpenMs?.toFixed(0)}ms${ack}${spikeTag}`,
+      `storm done: p50=${report.p50.toFixed(1)} p99=${report.p99.toFixed(1)} max=${report.max.toFixed(1)} misses=${report.missServes}/${report.flips} coldOpen=${report.coldOpenMs?.toFixed(0)}ms${ack}${spikeTag} keys=${keys.currentBindings().length} stormOk=${stormOk}`,
     );
     await sleep(500);
     await quitApp();

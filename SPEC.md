@@ -107,14 +107,21 @@ filter the folder to a person.
   active). All worker writes are conditional commits guarded by DB-backed
   epoch/enabled/generation/revision checks — a user correction always beats
   an in-flight scan, in any process.
-- **UX**: People panel (`p`, trash-panel style) — named people with counts +
-  rename, unnamed recurring clusters with one-line naming, undo toast; HUD
-  face badges (named only) with a correction menu; person filter (`Shift+p`)
-  AND-combines with stars/recipe/tag.
+- **UX**: People panel (`p`, trash-panel style) — named people with counts,
+  rename, merge-on-rename-collision, hide-from-lists; unnamed recurring
+  clusters with one-line naming, per-face exclude, and "not a person / don't
+  label" for statues and photographed photos; faces seen only once are
+  collapsed and rescue-only (unlabeled is their resting state); undo toasts;
+  "rescan faces" re-detects a folder after a settings change, names intact.
+  On the photo: face badges (named only, `Shift+f` toggles) with a correction
+  menu, plus an unnamed-face count that reveals boxes for naming in place.
+  Person filter (`Shift+p`) AND-combines with stars/recipe/tag.
 - **Auto-recognition** is calibrated on real photos before it ships
-  (thresholds in settings.toml `[faces]`); prototypes come from
-  user-confirmed faces only, with a margin test, so one mistake cannot
-  cascade.
+  (thresholds in settings.toml `[faces]`, measured 2026-08: assign at 0.45
+  with a 0.08 margin, detect at 0.5); prototypes come from user-confirmed
+  faces only — outliers excluded — with a margin test, so one mistake cannot
+  cascade. Corrections are absolute: "not X" bars X from every automatic
+  path, and naming X retracts it.
 - **Privacy**: "Delete all face data" wipes embeddings, names and chips AND
   durably disables indexing (survives relaunch and concurrent processes);
   re-enabling is an explicit act that starts from scratch. Everything is

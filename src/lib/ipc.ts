@@ -338,6 +338,12 @@ export function deletePerson(personId: number): Promise<number> {
   return invoke<number>('delete_person', { personId });
 }
 
+/** Declutter only: hidden people leave the list and the switcher, but keep
+ * their labels and stay recognized. */
+export function setPersonHidden(personId: number, hidden: boolean): Promise<void> {
+  return invoke('set_person_hidden', { personId, hidden });
+}
+
 export function onFacesProgress(cb: (p: FacesProgress) => void): Promise<UnlistenFn> {
   return listen<FacesProgress>('faces-progress', (e) => cb(e.payload));
 }

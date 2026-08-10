@@ -43,11 +43,13 @@ run_phase() { # name, expected-pattern, env assignments...
 }
 
 run_phase zoomtest 'zoomtest done: PASS' EMBER_ZOOMTEST=1
-run_phase storm 'storm done' EMBER_STORM=1
+# stormOk covers the budget AND that flips were actually recorded — a storm
+# that measures nothing must never read as a pass.
+run_phase storm 'storm done:.*stormOk=true' EMBER_STORM=1
 # Faces gate (plan rev 4, Slice 0): the storm must hold its budget with the
 # detect→embed spike pinned active. facesSpike=ACTIVE in the result line
 # proves inference actually ran during the measured window, not before it.
-run_phase storm-faces 'storm done:.*facesSpike=ACTIVE' EMBER_STORM=1 EMBER_FACES_FORCE=1
+run_phase storm-faces 'storm done:.*facesSpike=ACTIVE.*stormOk=true' EMBER_STORM=1 EMBER_FACES_FORCE=1
 # Person filter (Slice C): names a cluster mid-scan, filters to that person,
 # and storms inside the filtered view — membership exactness + flip budget.
 run_phase peopletest 'peopletest done: PASS' EMBER_PEOPLETEST=1
