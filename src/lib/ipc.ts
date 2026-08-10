@@ -157,6 +157,7 @@ export interface DevFlags {
   resumeTest: boolean;
   zoomTest: boolean;
   facesForce: boolean;
+  peopleTest: boolean;
 }
 
 export function devFlags(): Promise<DevFlags> {

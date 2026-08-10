@@ -35,6 +35,11 @@ const DEFAULTS: &[(&str, &[&str], &str)] = &[
     ("tag_filter", &["Shift+g"], "Tag filter quick-switcher"),
     ("people_panel", &["p"], "Toggle People panel"),
     (
+        "person_filter",
+        &["Shift+p"],
+        "Person filter quick-switcher",
+    ),
+    (
         "sort_cycle",
         &["s"],
         "Cycle sort: capture → filename → rating",

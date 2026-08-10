@@ -1,4 +1,13 @@
-import { devFlags, facesSpikeStats, frontendLog, quitApp } from './ipc';
+import {
+  devFlags,
+  faceClusters,
+  faceScanStatus,
+  faceSetName,
+  facesSpikeStats,
+  frontendLog,
+  personMap,
+  quitApp,
+} from './ipc';
 import * as perf from './perf';
 import * as session from './session';
 import * as viewer from './viewer';
@@ -165,6 +174,70 @@ export async function runIfRequested(): Promise<void> {
       if (!backToFit) failures += 1;
     }
     frontendLog('info', `zoomtest done: ${failures === 0 ? 'PASS' : `FAIL (${failures} blanks)`}`);
+    await sleep(300);
+    await quitApp();
+    return;
+  }
+
+  // Slice C acceptance, automated: name a cluster, filter to that person
+  // WHILE the face worker is still scanning, and storm inside the filtered
+  // view. Proves the filter is real (every visible photo carries the person),
+  // that matches stream in mid-scan, and that flips stay fast under it.
+  if (flags.peopleTest) {
+    const st = session.getState();
+    const folderId = st.folderId;
+    if (folderId === null) {
+      frontendLog('info', 'peopletest done: FAIL (no folder)');
+      await quitApp();
+      return;
+    }
+    // Wait until enough faces exist to cluster (worker is still going).
+    let clusters = await faceClusters(folderId);
+    for (let i = 0; i < 60 && clusters.clusters.length === 0; i++) {
+      await sleep(1000);
+      clusters = await faceClusters(folderId);
+    }
+    const status = await faceScanStatus(folderId);
+    if (clusters.clusters.length === 0) {
+      frontendLog(
+        'info',
+        `peopletest done: FAIL (no clusters; scanned=${status.scanned}/${status.total} enabled=${status.enabled})`,
+      );
+      await sleep(200);
+      await quitApp();
+      return;
+    }
+    const target = clusters.clusters[0];
+    const named = await faceSetName(target.faceIds, 'HarnessPerson');
+    const personId = named.person.id;
+    const mid = await faceScanStatus(folderId);
+    const scanning = mid.scanned < mid.total;
+    await session.setPersonFilter(personId);
+    let s = session.getState();
+    const before = s.photos.length;
+    // Membership must be exact: every visible photo carries this person.
+    const map = await personMap(folderId);
+    const bogus = s.photos.filter((p) => !(map[p.id] ?? []).includes(personId));
+    // Let the sweep + live refetch land, then re-measure (matches stream in).
+    await sleep(4000);
+    s = session.getState();
+    const after = s.photos.length;
+    const report = await perf.flipStorm(60, 60);
+    // flips >= 10 guards against a vacuous pass: a filtered view shorter than
+    // the storm stops advancing at its end and records no samples.
+    const ok =
+      before > 0 &&
+      bogus.length === 0 &&
+      after >= before &&
+      report.flips >= 10 &&
+      report.p99 <= 50 &&
+      report.missServes === 0;
+    frontendLog(
+      'info',
+      `peopletest done: ${ok ? 'PASS' : 'FAIL'} named=${target.faceIds.length} ` +
+        `visible=${before}→${after}/${s.all.length} bogus=${bogus.length} ` +
+        `scanningWhenFiltered=${scanning} p99=${report.p99.toFixed(1)} misses=${report.missServes}/${report.flips}`,
+    );
     await sleep(300);
     await quitApp();
     return;

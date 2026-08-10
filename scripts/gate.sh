@@ -48,5 +48,8 @@ run_phase storm 'storm done' EMBER_STORM=1
 # detect→embed spike pinned active. facesSpike=ACTIVE in the result line
 # proves inference actually ran during the measured window, not before it.
 run_phase storm-faces 'storm done:.*facesSpike=ACTIVE' EMBER_STORM=1 EMBER_FACES_FORCE=1
+# Person filter (Slice C): names a cluster mid-scan, filters to that person,
+# and storms inside the filtered view — membership exactness + flip budget.
+run_phase peopletest 'peopletest done: PASS' EMBER_PEOPLETEST=1
 
 echo "=== gates complete"

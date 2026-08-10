@@ -14,6 +14,8 @@ import TagPalette from './components/TagPalette';
 import TagSwitcher from './components/TagSwitcher';
 import ExifPanel from './components/ExifPanel';
 import PeoplePanel from './components/PeoplePanel';
+import PersonSwitcher from './components/PersonSwitcher';
+import FaceBadges from './components/FaceBadges';
 import type { TrashedPhoto } from './lib/types';
 import './App.css';
 
@@ -219,9 +221,11 @@ export default function App() {
   const [showRecipes, setShowRecipes] = useState(false);
   const [showTagPalette, setShowTagPalette] = useState(false);
   const [showTagFilter, setShowTagFilter] = useState(false);
+  const [showPersonFilter, setShowPersonFilter] = useState(false);
   // Ref mirror so the (deps-stable) global key handler sees the live values.
   const overlayOpenRef = useRef(false);
-  overlayOpenRef.current = showRecipes || showTagPalette || showTagFilter;
+  overlayOpenRef.current =
+    showRecipes || showTagPalette || showTagFilter || showPersonFilter;
   const [showStrip, setShowStrip] = useState(localStorage.getItem('filmstrip') !== '0');
   const [showExif, setShowExif] = useState(localStorage.getItem('exifPanel') === '1');
   const [keysReady, setKeysReady] = useState(false);
@@ -359,6 +363,9 @@ export default function App() {
         case 'people_panel':
           setShowPeople((v) => !v);
           setShowTrash(false); // same dock — one panel at a time
+          break;
+        case 'person_filter':
+          setShowPersonFilter((v) => !v);
           break;
         case 'perf_hud':
           setShowPerf((v) => !v);
@@ -522,6 +529,16 @@ export default function App() {
       <div className="viewer-wrap">
         <canvas ref={canvasRef} className="viewer-canvas" />
 
+        {photo && state.currentFaces && state.currentFaces.length > 0 && (
+          <FaceBadges
+            faces={state.currentFaces}
+            onOpenPanel={() => {
+              setShowPeople(true);
+              setShowTrash(false);
+            }}
+          />
+        )}
+
         {photo && (
           <div className="hud">
             <span className="hud-name">{photo.stem}</span>
@@ -546,6 +563,11 @@ export default function App() {
               </span>
             )}
             {state.tagFilter && <span className="hud-chip">#{state.tagFilter}</span>}
+            {state.personFilter !== null && (
+              <span className="hud-chip">
+                @{state.persons.find((p) => p.id === state.personFilter)?.name ?? 'person'}
+              </span>
+            )}
             {photo.tags && photo.tags.length > 0 && (
               <span className="hud-chip hud-dim">
                 {photo.tags.slice(0, 2).map((t) => `#${t}`).join(' ')}
@@ -668,6 +690,7 @@ export default function App() {
       {showRecipes && <RecipeSwitcher onClose={() => setShowRecipes(false)} />}
       {showTagPalette && <TagPalette onClose={() => setShowTagPalette(false)} />}
       {showTagFilter && <TagSwitcher onClose={() => setShowTagFilter(false)} />}
+      {showPersonFilter && <PersonSwitcher onClose={() => setShowPersonFilter(false)} />}
       {showPerf && <PerfHud />}
     </div>
   );

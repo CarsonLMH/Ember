@@ -597,6 +597,106 @@ kbd {
   border-top: 1px solid #2a2a2a;
 }
 
+/* Face badges over the photo (SPEC §14). The layer is inert so pan/pinch
+   still reach the canvas; only the controls take pointer events. */
+.face-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.face-ring {
+  position: absolute;
+  border: 1.5px solid rgba(150, 210, 255, 0.5);
+  border-radius: 3px;
+}
+
+.face-ring-auto {
+  border-style: dashed;
+}
+
+.face-badge {
+  position: absolute;
+  transform: translateY(2px);
+  min-width: 0;
+  max-width: 220px;
+  padding: 1px 6px;
+  background: rgba(20, 20, 20, 0.82);
+  border: 1px solid rgba(150, 210, 255, 0.35);
+  border-radius: 10px;
+  color: #dfe8f0;
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.face-badge:hover {
+  border-color: #9cf;
+  background: rgba(30, 34, 38, 0.95);
+}
+
+.face-badge-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.face-unnamed {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  padding: 2px 8px;
+  background: rgba(20, 20, 20, 0.75);
+  border: 1px solid #333;
+  border-radius: 10px;
+  color: #888;
+  font-size: 11px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.face-unnamed:hover {
+  color: #ccc;
+  border-color: #567;
+}
+
+.face-menu {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 170px;
+  padding: 6px;
+  background: rgba(20, 20, 20, 0.96);
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  pointer-events: auto;
+}
+
+.face-menu-head {
+  color: #888;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 4px 4px;
+}
+
+.face-menu button {
+  text-align: left;
+  padding: 4px 6px;
+  font-size: 12px;
+  border-radius: 4px;
+}
+
+.face-menu button:hover {
+  background: #2a2f33;
+}
+
 .people-confirm {
   display: flex;
   flex-direction: column;

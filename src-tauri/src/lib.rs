@@ -848,6 +848,7 @@ fn dev_flags() -> serde_json::Value {
         "resumeTest": flag("EMBER_RESUME_TEST"),
         "zoomTest": flag("EMBER_ZOOMTEST"),
         "facesForce": faces::force_enabled(),
+        "peopleTest": flag("EMBER_PEOPLETEST"),
     })
 }
 

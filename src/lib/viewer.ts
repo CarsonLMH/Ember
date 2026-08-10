@@ -164,6 +164,38 @@ export function zoomPercent(): number | null {
   return fitScale() * view.factor;
 }
 
+export interface CssBox {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Map a normalized display-space rect (face rects, SPEC §14) to CSS pixels
+ * over the canvas element, for DOM chrome drawn on top of it.
+ *
+ * Fit mode only, deliberately: zoom is for inspecting pixels, and chasing the
+ * canvas transform through a 120Hz pinch stream with DOM nodes is exactly the
+ * kind of chrome work this app keeps off the interaction path.
+ */
+export function normalizedRectToCss(r: [number, number, number, number]): CssBox | null {
+  if (!canvas || view || !alive(preview)) return null;
+  const dpr = window.devicePixelRatio || 1;
+  const { width: cw, height: ch } = canvas;
+  const scale = Math.min(cw / preview.width, ch / preview.height);
+  const dw = preview.width * scale;
+  const dh = preview.height * scale;
+  const dx = (cw - dw) / 2;
+  const dy = (ch - dh) / 2;
+  return {
+    left: (dx + r[0] * dw) / dpr,
+    top: (dy + r[1] * dh) / dpr,
+    width: (r[2] * dw) / dpr,
+    height: (r[3] * dh) / dpr,
+  };
+}
+
 export function isZoomed(): boolean {
   return view !== null;
 }

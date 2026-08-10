@@ -34,6 +34,7 @@ macOS photo-culling app (Tauri 2 + Rust + React/TS). **Read SPEC.md first** — 
 - No full-res decode in the flip hot path — full-res exists only in zoom mode.
 - No bulk verdict mutations anywhere. All verdict changes flow through the append-only journal.
 - Keep the flip path framework-free (imperative canvas + cache modules); React renders chrome, not the image.
+- Face badges are DOM chrome over the canvas, positioned via `viewer.normalizedRectToCss` and **fit-mode only** — chasing the canvas transform with DOM nodes through a 120Hz pinch stream is exactly the work this app keeps off the interaction path. The layer is `pointer-events: none` so pan/pinch/double-click still reach the canvas.
 
 ## Data locations
 

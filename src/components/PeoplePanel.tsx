@@ -21,6 +21,7 @@ import {
   type FaceScanStatus,
   type PersonOut,
 } from '../lib/ipc';
+import * as session from '../lib/session';
 
 /** Chip img with the 404-retry pattern: the face route enqueues a repair on
  * miss and the retry query busts WebKit's negative cache when it lands.
@@ -127,6 +128,13 @@ export default function PeoplePanel({
     void faceClusters(folderId).then(setClusters).catch(() => {});
   }, [folderId]);
 
+  /** After a panel EDIT: refresh the panel and everything outside it that
+   * depends on people (HUD badges, person filter membership, the switcher). */
+  const reload = useCallback(() => {
+    load();
+    void session.peopleChanged();
+  }, [load]);
+
   // Reload on open AND whenever trash state moves (trashing a photo of a
   // named person must drop their count while the panel is open).
   useEffect(load, [load, trashedCount]);
@@ -179,7 +187,7 @@ export default function PeoplePanel({
     } catch (e) {
       notify(`Naming failed — ${String(e)}`);
     }
-    load();
+    reload();
   };
 
   const dismissCluster = async (cluster: FaceCluster) => {
@@ -193,7 +201,7 @@ export default function PeoplePanel({
     } catch (e) {
       notify(String(e));
     }
-    load();
+    reload();
   };
 
   /** The faces just ✕'d out of a group are often exactly the ones the user
@@ -212,7 +220,7 @@ export default function PeoplePanel({
     } catch (e) {
       notify(String(e));
     }
-    load();
+    reload();
   };
 
   /** Name the selected loose faces — "Nati" folds them into existing Nati,
@@ -232,7 +240,7 @@ export default function PeoplePanel({
     } catch (e) {
       notify(`Naming failed — ${String(e)}`);
     }
-    load();
+    reload();
   };
 
   const undo = async (toast: UndoToast) => {
@@ -248,7 +256,7 @@ export default function PeoplePanel({
     } catch (e) {
       notify(String(e));
     }
-    load();
+    reload();
   };
 
   const rename = async (person: PersonOut, name: string) => {
@@ -263,7 +271,7 @@ export default function PeoplePanel({
     } catch (e) {
       notify(String(e));
     }
-    load();
+    reload();
   };
 
   const merge = async () => {
@@ -277,7 +285,7 @@ export default function PeoplePanel({
       notify(String(e));
     }
     setExpanded(null);
-    load();
+    reload();
   };
 
   const notPerson = async (face: ChipRef, person: PersonOut) => {
@@ -287,7 +295,7 @@ export default function PeoplePanel({
       notify(String(e));
     }
     void personFaces(person.id, folderId).then(setExpandedFaces).catch(() => {});
-    load();
+    reload();
   };
 
   const toggleEnabled = async () => {
@@ -297,7 +305,7 @@ export default function PeoplePanel({
     } catch (e) {
       notify(String(e));
     }
-    load();
+    reload();
   };
 
   const deleteAll = async () => {
@@ -308,7 +316,7 @@ export default function PeoplePanel({
     } catch (e) {
       notify(String(e));
     }
-    load();
+    reload();
   };
 
   const calibrate = async () => {
