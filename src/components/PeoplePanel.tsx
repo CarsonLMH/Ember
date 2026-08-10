@@ -87,6 +87,7 @@ type UndoToast =
 export default function PeoplePanel({
   folderId,
   trashedCount,
+  peopleVersion,
   onClose,
   notify,
   onJump,
@@ -94,6 +95,8 @@ export default function PeoplePanel({
   folderId: number;
   /** Trash/restore/undo change folder-scoped counts — reload when it moves. */
   trashedCount: number;
+  /** Bumped by people edits made OUTSIDE the panel (on-photo corrections). */
+  peopleVersion: number;
   onClose: () => void;
   notify: (msg: string) => void;
   /** Move the culling cursor to a photo (chip click → context). */
@@ -136,9 +139,10 @@ export default function PeoplePanel({
     void session.peopleChanged();
   }, [load]);
 
-  // Reload on open AND whenever trash state moves (trashing a photo of a
-  // named person must drop their count while the panel is open).
-  useEffect(load, [load, trashedCount]);
+  // Reload on open, whenever trash state moves (trashing a photo of a named
+  // person must drop their count while the panel is open), and whenever a
+  // people edit happens elsewhere (naming a face from the photo).
+  useEffect(load, [load, trashedCount, peopleVersion]);
 
   // Live refresh while the worker scans — debounced against event bursts.
   useEffect(() => {

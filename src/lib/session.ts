@@ -74,6 +74,9 @@ export interface SessionState {
   persons: PersonOut[];
   /** Faces of the current photo: null until scanned (badges stay silent). */
   currentFaces: FaceOut[] | null;
+  /** Bumped on every people edit from anywhere — the panel watches it so a
+   * correction made on the photo refreshes its counts and clusters. */
+  peopleVersion: number;
   loading: boolean;
   error: string | null;
   notice: string | null;
@@ -107,6 +110,7 @@ let state: SessionState = {
   personFilter: null,
   persons: [],
   currentFaces: null,
+  peopleVersion: 0,
   loading: false,
   error: null,
   notice: null,
@@ -447,7 +451,7 @@ export async function peopleChanged(): Promise<void> {
   if (state.folderId !== null) {
     personMapCache = await personMap(state.folderId).catch(() => ({}));
   }
-  rebuild(state.all, {}, currentPhoto()?.id ?? null);
+  rebuild(state.all, { peopleVersion: state.peopleVersion + 1 }, currentPhoto()?.id ?? null);
   const photo = currentPhoto();
   if (photo) void refreshFaces(photo.id);
 }

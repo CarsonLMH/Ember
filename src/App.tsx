@@ -688,6 +688,7 @@ export default function App() {
         <PeoplePanel
           folderId={state.folderId}
           trashedCount={state.trashedCount}
+          peopleVersion={state.peopleVersion}
           onClose={() => setShowPeople(false)}
           notify={(m) => session.notify(m)}
           onJump={(id) => session.jumpToPhotoId(id)}

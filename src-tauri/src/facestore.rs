@@ -1530,14 +1530,16 @@ mod tests {
     /// Store + a separate "worker" connection on the same file — mirrors the
     /// two-connection reality (and, in spirit, the two-process gate reality).
     fn setup() -> (Store, Connection, i64, PathBuf) {
+        // A per-process counter, NOT a timestamp: tests run in parallel
+        // threads and two of them landing in the same microsecond shared one
+        // DB file, which surfaced as a flaky "database is locked".
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
             "emberfaces-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .subsec_nanos()
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("test.sqlite3");
         let store = Store::new(&path).unwrap();

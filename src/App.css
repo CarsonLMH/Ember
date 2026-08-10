@@ -646,13 +646,19 @@ kbd {
   pointer-events: auto;
 }
 
-.face-ring-unnamed:hover {
+/* The generic `button:hover` background out-specifies a single class, so the
+   box filled solid grey over the face exactly when you hovered to click it. */
+.face-ring-unnamed:hover,
+.face-ring-unnamed:focus {
+  background: none;
   border-color: #9cf;
 }
 
+/* Bottom-RIGHT: the histogram panel owns bottom-left and the notice owns
+   bottom-centre — both render after this layer and were eating the clicks. */
 .face-unnamed-row {
   position: absolute;
-  left: 12px;
+  right: 12px;
   bottom: 12px;
   display: flex;
   gap: 6px;

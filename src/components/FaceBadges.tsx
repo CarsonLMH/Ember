@@ -139,8 +139,15 @@ export default function FaceBadges({
             {unnamedFaces.length} unnamed face{unnamedFaces.length === 1 ? '' : 's'}
             {showUnnamed ? ' — click a box to name' : ''}
           </button>
-          <button className="face-unnamed" onClick={onOpenPanel} title="Open the People panel">
-            people ⌃
+          <button
+            className="face-unnamed"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenPanel();
+            }}
+            title="Open the People panel"
+          >
+            people panel
           </button>
         </span>
       )}
