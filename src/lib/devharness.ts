@@ -1,4 +1,5 @@
 import {
+  deletePerson,
   devFlags,
   faceClusters,
   faceScanStatus,
@@ -232,11 +233,18 @@ export async function runIfRequested(): Promise<void> {
       report.flips >= 10 &&
       report.p99 <= 50 &&
       report.missServes === 0;
+    // ALWAYS tear down: this DB is the user's real one, and a leftover
+    // "HarnessPerson" once showed up in their face menus. delete_person is
+    // unconditional — undo_naming deliberately skips rows a later edit (or a
+    // concurrent re-detect) touched, so it cannot promise a clean exit.
+    const undone = await deletePerson(personId).catch(() => -1);
+    await session.setPersonFilter(null);
     frontendLog(
       'info',
       `peopletest done: ${ok ? 'PASS' : 'FAIL'} named=${target.faceIds.length} ` +
         `visible=${before}→${after}/${s.all.length} bogus=${bogus.length} ` +
-        `scanningWhenFiltered=${scanning} p99=${report.p99.toFixed(1)} misses=${report.missServes}/${report.flips}`,
+        `scanningWhenFiltered=${scanning} p99=${report.p99.toFixed(1)} ` +
+        `misses=${report.missServes}/${report.flips} cleanedUp=${undone}`,
     );
     await sleep(300);
     await quitApp();

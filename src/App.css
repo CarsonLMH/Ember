@@ -615,21 +615,21 @@ kbd {
   border-style: dashed;
 }
 
+/* Centred under the face box and sized by its TEXT, never by the box — a
+   distant face is a few pixels wide and a truncated name reads as noise. */
 .face-badge {
   position: absolute;
-  transform: translateY(2px);
-  min-width: 0;
-  max-width: 220px;
-  padding: 1px 6px;
+  transform: translate(-50%, 3px);
+  padding: 1px 8px;
   background: rgba(20, 20, 20, 0.82);
   border: 1px solid rgba(150, 210, 255, 0.35);
   border-radius: 10px;
   color: #dfe8f0;
   font-size: 11px;
   line-height: 16px;
+  white-space: nowrap;
   cursor: pointer;
   pointer-events: auto;
-  overflow: hidden;
 }
 
 .face-badge:hover {
@@ -637,17 +637,28 @@ kbd {
   background: rgba(30, 34, 38, 0.95);
 }
 
-.face-badge-name {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.face-ring-unnamed {
+  border-style: dashed;
+  border-color: rgba(190, 190, 190, 0.5);
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  pointer-events: auto;
 }
 
-.face-unnamed {
+.face-ring-unnamed:hover {
+  border-color: #9cf;
+}
+
+.face-unnamed-row {
   position: absolute;
   left: 12px;
   bottom: 12px;
+  display: flex;
+  gap: 6px;
+}
+
+.face-unnamed {
   padding: 2px 8px;
   background: rgba(20, 20, 20, 0.75);
   border: 1px solid #333;
@@ -665,6 +676,7 @@ kbd {
 
 .face-menu {
   position: absolute;
+  transform: translateX(-50%);
   z-index: 5;
   display: flex;
   flex-direction: column;

@@ -30,7 +30,13 @@ impl Default for FacesCfg {
             // one cluster on real photos; 0.50 fragments instead — cheap,
             // since naming both fragments the same name merges them.
             cluster_threshold: 0.50,
-            min_det_score: 0.8,
+            // Measured on a real miss (a lit, tilted face scored 0.615 while
+            // the junk in the same frame scored 0.069): 0.8 silently dropped
+            // real people, which is the expensive failure — a missing face
+            // means a photo absent from a person filter, while a false
+            // detection is one dismissal in the panel. Detection settings
+            // only affect photos scanned after the change; use "rescan faces".
+            min_det_score: 0.5,
         }
     }
 }
@@ -69,7 +75,10 @@ fn default_file_contents() -> String {
      # when you toggle faces or use \"Delete all face data\".\n\
      enabled = true\n\
      # Detection confidence floor (0-1) and clustering similarity threshold.\n\
-     min_det_score = 0.8\n\
+     # Lowering min_det_score finds more faces (and more junk); it applies to\n\
+     # newly scanned photos — use \"rescan faces\" in the People panel to\n\
+     # re-detect a folder you have already indexed.\n\
+     min_det_score = 0.5\n\
      cluster_threshold = 0.5\n\
      # Auto-recognition thresholds (calibrated on real photos 2026-08).\n\
      auto_assign_threshold = 0.45\n\
@@ -266,7 +275,7 @@ mod tests {
         assert!(!f.enabled);
         assert!((f.cluster_threshold - 0.6).abs() < 1e-6);
         assert!(
-            (f.min_det_score - 0.8).abs() < 1e-6,
+            (f.min_det_score - 0.5).abs() < 1e-6,
             "out of range → default"
         );
         std::fs::remove_dir_all(&dir).unwrap();

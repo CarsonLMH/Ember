@@ -328,6 +328,16 @@ export function setFacesEnabled(enabled: boolean): Promise<void> {
   return invoke('set_faces_enabled', { enabled });
 }
 
+/** Re-detect the folder (names survive) — e.g. after changing detection settings. */
+export function rescanFaces(folderId: number): Promise<number> {
+  return invoke<number>('rescan_faces', { folderId });
+}
+
+/** Remove a person entirely; their faces return to Unnamed. */
+export function deletePerson(personId: number): Promise<number> {
+  return invoke<number>('delete_person', { personId });
+}
+
 export function onFacesProgress(cb: (p: FacesProgress) => void): Promise<UnlistenFn> {
   return listen<FacesProgress>('faces-progress', (e) => cb(e.payload));
 }

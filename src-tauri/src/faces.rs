@@ -817,6 +817,30 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// Diagnostic: print every YuNet detection and its score for one image,
+    /// for tuning `min_det_score` against real misses.
+    /// `EMBER_DET_IMAGE=/path/to.jpg cargo test -- --ignored detection_scores --nocapture`
+    #[test]
+    #[ignore]
+    fn detection_scores_for_env_image() {
+        let Ok(path) = std::env::var("EMBER_DET_IMAGE") else {
+            eprintln!("set EMBER_DET_IMAGE");
+            return;
+        };
+        let mut engine = FaceEngine::new(&models_dir(None), 0.05).expect("models load");
+        let img = image::open(&path).expect("image").to_rgb8();
+        let faces = engine.detect_embed(&img).expect("inference");
+        eprintln!("{}: {} detections ≥0.05", path, faces.len());
+        let mut scores: Vec<f32> = faces.iter().map(|f| f.score).collect();
+        scores.sort_by(|a, b| b.total_cmp(a));
+        for (i, f) in faces.iter().enumerate() {
+            eprintln!(
+                "  #{i} score={:.3} rect=[{:.3},{:.3},{:.3},{:.3}]",
+                f.score, f.rect[0], f.rect[1], f.rect[2], f.rect[3]
+            );
+        }
+    }
+
     /// Real models + a real photograph — validates the fixed 640×640
     /// letterbox strategy end to end (Slice 0 acceptance). `#[ignore]` only
     /// because it needs the 38MB model files; run with `cargo test -- --ignored`.

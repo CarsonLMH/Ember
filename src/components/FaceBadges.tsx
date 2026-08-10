@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import * as session from '../lib/session';
 import * as viewer from '../lib/viewer';
-import { faceAssign, faceReject, faceSetName, setFacesIgnored, type FaceOut } from '../lib/ipc';
+import { faceReject, faceSetName, setFacesIgnored, type FaceOut } from '../lib/ipc';
 
 /**
  * Named-face badges over the photo (SPEC §14) and the on-photo correction
@@ -21,6 +21,9 @@ export default function FaceBadges({
   const [, bump] = useState(0);
   const [menuFor, setMenuFor] = useState<FaceOut | null>(null);
   const [naming, setNaming] = useState(false);
+  /** Unnamed faces stay invisible until asked for — but "Not X" leaves a face
+   * unnamed, and it must be re-labelable without hunting through the panel. */
+  const [showUnnamed, setShowUnnamed] = useState(false);
 
   // Reposition when the canvas transform changes (resize, zoom in/out, flip).
   // In fit mode these are discrete events, not a gesture stream.
@@ -28,22 +31,35 @@ export default function FaceBadges({
   useEffect(() => {
     setMenuFor(null);
     setNaming(false);
+    setShowUnnamed(false);
   }, [faces]);
-  // Escape closes the menu (App's global handler also runs — harmless).
+  // Escape or a click anywhere else closes the menu. The pointerdown capture
+  // listener sees canvas clicks too (the layer is inert), so any click that
+  // isn't inside the menu dismisses it.
   useEffect(() => {
     if (!menuFor) return;
+    const close = () => {
+      setMenuFor(null);
+      setNaming(false);
+    };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setMenuFor(null);
-        setNaming(false);
-      }
+      if (e.key === 'Escape') close();
+    };
+    const onPointer = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('.face-menu, .face-badge')) return;
+      close();
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('pointerdown', onPointer, true);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('pointerdown', onPointer, true);
+    };
   }, [menuFor]);
 
   const named = faces.filter((f) => f.personId !== null && !f.ignored);
-  const unnamed = faces.filter((f) => f.personId === null && !f.ignored).length;
+  const unnamedFaces = faces.filter((f) => f.personId === null && !f.ignored);
 
   const act = async (fn: () => Promise<unknown>) => {
     setMenuFor(null);
@@ -66,7 +82,9 @@ export default function FaceBadges({
           <button
             key={f.faceId}
             className="face-badge"
-            style={{ left: box.left, top: box.top + box.height, width: box.width }}
+            // Anchored to the box's horizontal centre, but never sized by it:
+            // a distant face gives a tiny box, and a truncated name is useless.
+            style={{ left: box.left + box.width / 2, top: box.top + box.height }}
             title={`${f.personName}${f.assignedBy === 'auto' ? ' (auto-recognized)' : ''} — click to correct`}
             onClick={(e) => {
               e.stopPropagation();
@@ -74,7 +92,7 @@ export default function FaceBadges({
               setNaming(false);
             }}
           >
-            <span className="face-badge-name">{f.personName}</span>
+            {f.personName}
           </button>
         );
       })}
@@ -91,49 +109,92 @@ export default function FaceBadges({
         );
       })}
 
-      {unnamed > 0 && (
-        <button className="face-unnamed" onClick={onOpenPanel} title="Open the People panel">
-          {unnamed} unnamed face{unnamed === 1 ? '' : 's'}
-        </button>
+      {/* Unnamed faces, revealed on demand: dashed grey boxes, click to name. */}
+      {showUnnamed &&
+        unnamedFaces.map((f) => {
+          const box = viewer.normalizedRectToCss(f.rect);
+          if (!box) return null;
+          return (
+            <button
+              key={`u-${f.faceId}`}
+              className="face-ring face-ring-unnamed"
+              style={{ left: box.left, top: box.top, width: box.width, height: box.height }}
+              title="Name this face"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuFor(f);
+                setNaming(true);
+              }}
+            />
+          );
+        })}
+
+      {unnamedFaces.length > 0 && (
+        <span className="face-unnamed-row">
+          <button
+            className="face-unnamed"
+            onClick={() => setShowUnnamed((v) => !v)}
+            title="Show unnamed faces on this photo so you can name them"
+          >
+            {unnamedFaces.length} unnamed face{unnamedFaces.length === 1 ? '' : 's'}
+            {showUnnamed ? ' — click a box to name' : ''}
+          </button>
+          <button className="face-unnamed" onClick={onOpenPanel} title="Open the People panel">
+            people ⌃
+          </button>
+        </span>
       )}
 
       {menuFor &&
-        menuFor.personId !== null &&
         (() => {
           const { faceId, personId, personName } = menuFor;
           const box = viewer.normalizedRectToCss(menuFor.rect);
           if (!box) return null;
-          const others = session.getState().persons.filter((p) => p.id !== personId && !p.hidden);
+          // An unnamed face has nothing to correct — go straight to naming.
+          const nameOnly = personId === null || naming;
           return (
             <div
               className="face-menu"
-              style={{ left: box.left, top: box.top + box.height + 26 }}
+              style={{ left: box.left + box.width / 2, top: box.top + box.height + 26 }}
               onClick={(e) => e.stopPropagation()}
             >
-              {naming ? (
-                <input
-                  className="people-input"
-                  autoFocus
-                  placeholder="Who is this?"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') setNaming(false);
-                    if (e.key !== 'Enter') return;
-                    const name = (e.target as HTMLInputElement).value.trim();
-                    if (name) void act(() => faceSetName([faceId], name));
-                  }}
-                />
+              {nameOnly ? (
+                <>
+                  <input
+                    className="people-input"
+                    autoFocus
+                    list="face-menu-names"
+                    placeholder="Who is this?"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        setNaming(false);
+                        if (personId === null) setMenuFor(null);
+                      }
+                      if (e.key !== 'Enter') return;
+                      const name = (e.target as HTMLInputElement).value.trim();
+                      if (name) void act(() => faceSetName([faceId], name));
+                    }}
+                  />
+                  {/* Existing names autocomplete; a new one creates a person. */}
+                  <datalist id="face-menu-names">
+                    {session
+                      .getState()
+                      .persons.filter((p) => !p.hidden)
+                      .map((p) => (
+                        <option key={p.id} value={p.name} />
+                      ))}
+                  </datalist>
+                </>
               ) : (
                 <>
                   <div className="face-menu-head">{personName}</div>
-                  <button onClick={() => void act(() => faceReject(faceId, personId))}>
+                  {/* Correction only. Reassignment goes through the name
+                      input (typing an existing name folds into that person),
+                      so the menu doesn't grow with the roster. */}
+                  <button onClick={() => void act(() => faceReject(faceId, personId!))}>
                     Not {personName}
                   </button>
-                  {others.map((p) => (
-                    <button key={p.id} onClick={() => void act(() => faceAssign(faceId, p.id))}>
-                      This is {p.name}
-                    </button>
-                  ))}
-                  <button onClick={() => setNaming(true)}>Someone else…</button>
+                  <button onClick={() => setNaming(true)}>This is someone else…</button>
                   <button onClick={() => void act(() => setFacesIgnored([faceId], true))}>
                     Not a person / don't label
                   </button>

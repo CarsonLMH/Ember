@@ -1080,6 +1080,28 @@ fn delete_face_data(state: tauri::State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn delete_person(state: tauri::State<'_, AppState>, person_id: i64) -> Result<usize, String> {
+    state
+        .store
+        .delete_person(person_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Re-detect every photo in the folder (after a detection-setting change, or
+/// when a face was visibly missed). Names survive via the carry-over path.
+#[tauri::command]
+fn rescan_faces(state: tauri::State<'_, AppState>, folder_id: i64) -> Result<usize, String> {
+    let rows = state
+        .store
+        .rescan_faces(folder_id)
+        .map_err(|e| e.to_string())?;
+    for (photo_id, count) in &rows {
+        state.preview.delete_face_chips(photo_id, *count);
+    }
+    Ok(rows.len())
+}
+
 /// Explicit user act; applied live (the worker reads the DB each cycle).
 /// Re-enabling after Delete-all starts indexing from scratch by design.
 #[tauri::command]
@@ -1259,6 +1281,8 @@ pub fn run() {
             face_calibration_report,
             delete_face_data,
             set_faces_enabled,
+            rescan_faces,
+            delete_person,
             quit_app,
             frontend_log
         ])

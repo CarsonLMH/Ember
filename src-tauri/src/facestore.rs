@@ -1010,6 +1010,14 @@ impl Store {
                     }
                 }
             }
+            // …and naming someone explicitly clears any older "not them" on
+            // this face: the user just overruled it. Without this, correcting
+            // a correction ("Not Carson" → name it Carson again) would leave a
+            // contradiction that silently blocks every future auto-match.
+            tx.execute(
+                "DELETE FROM face_person_rejections WHERE face_id = ?1 AND person_id = ?2",
+                params![fid, person_id],
+            )?;
             photos.insert(photo_id.clone());
             prior.push((fid, photo_id, p_person, p_by, p_sim));
             affected.push(fid);
@@ -1380,6 +1388,67 @@ impl Store {
             params![photo_id],
         )?;
         Ok(count.unwrap_or(0))
+    }
+
+    /// Remove a person entirely: their faces return to Unnamed and every
+    /// rejection naming them is dropped. Used by the gate harness for
+    /// guaranteed teardown (undo alone can't promise it — undo deliberately
+    /// skips rows a later edit touched); also the honest answer to "I created
+    /// this person by mistake". Returns freed face count.
+    pub fn delete_person(&self, person_id: i64) -> rusqlite::Result<usize> {
+        let mut conn = self.lock_conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let photos: Vec<String> = {
+            let mut stmt =
+                tx.prepare("SELECT DISTINCT photo_id FROM faces WHERE person_id = ?1")?;
+            let v: Vec<String> = stmt
+                .query_map(params![person_id], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            v
+        };
+        let freed = tx.execute(
+            "UPDATE faces SET person_id = NULL, assigned_by = NULL, similarity = NULL
+             WHERE person_id = ?1",
+            params![person_id],
+        )?;
+        tx.execute(
+            "DELETE FROM face_person_rejections WHERE person_id = ?1",
+            params![person_id],
+        )?;
+        tx.execute("DELETE FROM persons WHERE id = ?1", params![person_id])?;
+        for pid in &photos {
+            bump_revision(&tx, pid)?;
+        }
+        tx.commit()?;
+        Ok(freed)
+    }
+
+    /// Manual "rescan faces": mark every scanned photo in the folder stale so
+    /// the worker re-detects them through the shared carry-over path — names,
+    /// ignored flags and rejections survive. Needed after a detection-setting
+    /// change, since an already-'ok' photo is never re-examined otherwise.
+    /// Returns the photo ids whose chips the caller should drop.
+    pub fn rescan_faces(&self, folder_id: i64) -> rusqlite::Result<Vec<(String, i64)>> {
+        let mut conn = self.lock_conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let rows: Vec<(String, i64)> = {
+            let mut stmt = tx.prepare(
+                "SELECT s.photo_id, s.face_count FROM face_scan s
+                 JOIN photos p ON p.id = s.photo_id
+                 WHERE p.folder_id = ?1 AND p.trashed = 0",
+            )?;
+            let v: Vec<(String, i64)> = stmt
+                .query_map(params![folder_id], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<Result<_, _>>()?;
+            v
+        };
+        tx.execute(
+            "UPDATE face_scan SET status = 'stale' WHERE photo_id IN
+             (SELECT id FROM photos WHERE folder_id = ?1 AND trashed = 0)",
+            params![folder_id],
+        )?;
+        tx.commit()?;
+        Ok(rows)
     }
 
     /// Metadata-only JPEG rewrite (rating/tag XMP): refresh the stat so the
@@ -2163,6 +2232,59 @@ mod tests {
     }
 
     #[test]
+    fn delete_person_frees_faces_and_drops_rejections() {
+        let (store, mut worker, folder_id, _) = setup();
+        let (_, ids) = seed_faces(&mut worker);
+        let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
+        let (dani, _) = store.face_set_name(&ids[1..], "Dani").unwrap();
+        store.face_reject(ids[1], nati.person.id).unwrap();
+
+        assert_eq!(store.delete_person(nati.person.id).unwrap(), 1);
+        let persons = store.list_persons(folder_id).unwrap();
+        assert_eq!(persons.len(), 1);
+        assert_eq!(persons[0].id, dani.person.id, "other people untouched");
+        let faces = store.faces_for_photo("p1").unwrap().unwrap();
+        assert_eq!(faces[0].person_id, None, "faces return to Unnamed");
+        assert_eq!(faces[1].person_id, Some(dani.person.id));
+        let conn = store.lock_conn();
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM face_person_rejections WHERE person_id = ?1",
+                params![nati.person.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 0, "rejections naming the deleted person are gone");
+    }
+
+    #[test]
+    fn rescan_marks_folder_stale_and_reports_chip_counts() {
+        let (store, mut worker, folder_id, _) = setup();
+        let (_, ids) = seed_faces(&mut worker);
+        store.face_set_name(&ids[..1], "Nati").unwrap();
+        let rows = store.rescan_faces(folder_id).unwrap();
+        assert_eq!(rows, vec![("p1".to_string(), 2)], "photo + chip count");
+        assert_eq!(scan_row(&worker, "p1").unwrap().unwrap().status, "stale");
+        // Badges go quiet while a photo is pending re-detection…
+        assert!(
+            store.faces_for_photo("p1").unwrap().is_none(),
+            "a stale photo reports 'not scanned', not stale rows"
+        );
+        // …but the rows survive as the carry-over source, so the name comes
+        // back with the replacement face rather than being lost.
+        let conn = store.lock_conn();
+        let name: String = conn
+            .query_row(
+                "SELECT per.name FROM faces f JOIN persons per ON per.id = f.person_id
+                 WHERE f.photo_id = 'p1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(name, "Nati");
+    }
+
+    #[test]
     fn rename_reports_conflict_for_merge_offer() {
         let (store, mut worker, _, _) = setup();
         let (_, ids) = seed_faces(&mut worker);
@@ -2225,6 +2347,36 @@ mod tests {
             )
             .unwrap();
         assert_eq!(orphaned, 0, "source rejections re-keyed or removed");
+    }
+
+    #[test]
+    fn naming_a_rejected_face_again_clears_the_contradiction() {
+        let (store, mut worker, _, _) = setup();
+        let (_, ids) = seed_faces(&mut worker);
+        let (carson, _) = store.face_set_name(&ids[..1], "Carson").unwrap();
+        // "Not Carson" on the photo → back to Unnamed, Carson barred.
+        store.face_reject(ids[0], carson.person.id).unwrap();
+        assert_eq!(
+            store.faces_for_photo("p1").unwrap().unwrap()[0].person_id,
+            None
+        );
+        // The user changes their mind and names it Carson again.
+        store.face_set_name(&ids[..1], "Carson").unwrap();
+        let f = &store.faces_for_photo("p1").unwrap().unwrap()[0];
+        assert_eq!(f.person_id, Some(carson.person.id));
+        let conn = store.lock_conn();
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM face_person_rejections
+                 WHERE face_id = ?1 AND person_id = ?2",
+                params![ids[0], carson.person.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            n, 0,
+            "the stale \"not Carson\" must not outlive the retraction"
+        );
     }
 
     #[test]

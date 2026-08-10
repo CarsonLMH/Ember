@@ -40,6 +40,11 @@ const DEFAULTS: &[(&str, &[&str], &str)] = &[
         "Person filter quick-switcher",
     ),
     (
+        "face_badges",
+        &["Shift+f"],
+        "Toggle face badges on the photo",
+    ),
+    (
         "sort_cycle",
         &["s"],
         "Cycle sort: capture → filename → rating",

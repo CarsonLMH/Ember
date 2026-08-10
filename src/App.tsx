@@ -227,6 +227,7 @@ export default function App() {
   overlayOpenRef.current =
     showRecipes || showTagPalette || showTagFilter || showPersonFilter;
   const [showStrip, setShowStrip] = useState(localStorage.getItem('filmstrip') !== '0');
+  const [showFaces, setShowFaces] = useState(localStorage.getItem('faceBadges') !== '0');
   const [showExif, setShowExif] = useState(localStorage.getItem('exifPanel') === '1');
   const [keysReady, setKeysReady] = useState(false);
   const [keysError, setKeysError] = useState<string | null>(null);
@@ -366,6 +367,12 @@ export default function App() {
           break;
         case 'person_filter':
           setShowPersonFilter((v) => !v);
+          break;
+        case 'face_badges':
+          setShowFaces((v) => {
+            localStorage.setItem('faceBadges', v ? '0' : '1');
+            return !v;
+          });
           break;
         case 'perf_hud':
           setShowPerf((v) => !v);
@@ -529,7 +536,7 @@ export default function App() {
       <div className="viewer-wrap">
         <canvas ref={canvasRef} className="viewer-canvas" />
 
-        {photo && state.currentFaces && state.currentFaces.length > 0 && (
+        {showFaces && photo && state.currentFaces && state.currentFaces.length > 0 && (
           <FaceBadges
             faces={state.currentFaces}
             onOpenPanel={() => {

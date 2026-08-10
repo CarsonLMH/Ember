@@ -12,6 +12,7 @@ import {
   onFacesProgress,
   personFaces,
   renamePerson,
+  rescanFaces,
   setFacesEnabled,
   setFacesIgnored,
   undoNaming,
@@ -313,6 +314,16 @@ export default function PeoplePanel({
     try {
       await deleteFaceData();
       notify('All face data deleted — indexing is now off');
+    } catch (e) {
+      notify(String(e));
+    }
+    reload();
+  };
+
+  const rescan = async () => {
+    try {
+      const n = await rescanFaces(folderId);
+      notify(`Re-detecting faces in ${n} photos — names are kept`);
     } catch (e) {
       notify(String(e));
     }
@@ -637,6 +648,13 @@ export default function PeoplePanel({
                 </button>
                 <button className="people-danger" onClick={() => setConfirmDelete(true)}>
                   Delete all face data
+                </button>
+                <button
+                  className="people-dim"
+                  title="Re-detect every photo in this folder (keeps names) — use after a missed face or a settings change"
+                  onClick={() => void rescan()}
+                >
+                  rescan faces
                 </button>
                 <button
                   className="people-dim"
