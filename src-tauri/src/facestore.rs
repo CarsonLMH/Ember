@@ -443,8 +443,14 @@ pub fn person_prototypes(
         }
     }
     for p in &mut out {
-        let picked = facedet::select_exemplars(&p.exemplars, max_exemplars);
-        p.exemplars = picked.iter().map(|&i| p.exemplars[i].clone()).collect();
+        // Junk confirmed faces (a named back-of-head) must not become
+        // references — drop outliers first, then pick for diversity.
+        let sane: Vec<Vec<f32>> = facedet::filter_exemplar_outliers(&p.exemplars)
+            .iter()
+            .map(|&i| p.exemplars[i].clone())
+            .collect();
+        let picked = facedet::select_exemplars(&sane, max_exemplars);
+        p.exemplars = picked.iter().map(|&i| sane[i].clone()).collect();
     }
     Ok(out)
 }

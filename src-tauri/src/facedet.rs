@@ -342,6 +342,40 @@ pub fn select_exemplars(embeddings: &[Vec<f32>], max: usize) -> Vec<usize> {
     picked
 }
 
+/// A confirmed face that resembles NONE of the person's other confirmed
+/// faces is a mislabel or a junk detection (back of a head, blur) — and
+/// max-min exemplar selection would otherwise LOVE it (outliers are maximally
+/// "diverse"). Below the OpenCV same-identity floor (0.363) it cannot be the
+/// same person as the rest, so it never becomes a reference.
+pub const EXEMPLAR_OUTLIER_FLOOR: f32 = 0.35;
+
+/// Indices safe to use as exemplar candidates. Needs enough evidence to
+/// judge (n ≥ 4); bails out to "keep all" if it would reject nearly
+/// everything (a person whose faces are genuinely all different is beyond
+/// automatic help and the thresholds still protect matching).
+pub fn filter_exemplar_outliers(embeddings: &[Vec<f32>]) -> Vec<usize> {
+    let n = embeddings.len();
+    if n < 4 {
+        return (0..n).collect();
+    }
+    let kept: Vec<usize> = (0..n)
+        .filter(|&i| {
+            embeddings
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j != i)
+                .map(|(_, e)| cosine(&embeddings[i], e))
+                .fold(f32::NEG_INFINITY, f32::max)
+                >= EXEMPLAR_OUTLIER_FLOOR
+        })
+        .collect();
+    if kept.len() < 2 {
+        (0..n).collect()
+    } else {
+        kept
+    }
+}
+
 pub struct PersonProtos {
     pub person_id: i64,
     pub exemplars: Vec<Vec<f32>>,
@@ -710,6 +744,30 @@ mod tests {
         // Cap respected; degenerate inputs safe.
         assert_eq!(select_exemplars(&embs, 10).len(), 5);
         assert!(select_exemplars(&[], 5).is_empty());
+    }
+
+    #[test]
+    fn exemplar_outlier_filter_drops_junk_confirmed_faces() {
+        let e = |x: f32, y: f32| {
+            let mut v = vec![x, y];
+            l2_normalize(&mut v);
+            v
+        };
+        // Four coherent faces + one junk (orthogonal — a named back-of-head).
+        let embs = vec![
+            e(1.0, 0.0),
+            e(0.95, 0.2),
+            e(0.9, 0.3),
+            e(0.97, 0.1),
+            e(0.0, 1.0), // junk
+        ];
+        assert_eq!(filter_exemplar_outliers(&embs), vec![0, 1, 2, 3]);
+        // Too few faces to judge → keep everything.
+        assert_eq!(filter_exemplar_outliers(&embs[..3]), vec![0, 1, 2]);
+        // A person whose faces are ALL mutually dissimilar: bail out, keep all
+        // (the matching thresholds still protect us downstream).
+        let scattered = vec![e(1.0, 0.0), e(0.0, 1.0), e(-1.0, 0.0), e(0.0, -1.0)];
+        assert_eq!(filter_exemplar_outliers(&scattered).len(), 4);
     }
 
     #[test]
