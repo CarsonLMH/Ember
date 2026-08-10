@@ -726,7 +726,9 @@ pub struct ChipRef {
 #[serde(rename_all = "camelCase")]
 pub struct ClusterOut {
     pub face_ids: Vec<i64>,
-    /// Up to 4 chips for display; `size` is the true total.
+    /// EVERY member, in cluster order — the panel previews a few but must be
+    /// able to offer per-face control over all of them (a hidden face can't
+    /// be excluded from a naming).
     pub chips: Vec<ChipRef>,
     pub size: i64,
     pub photo_count: i64,
@@ -901,7 +903,6 @@ impl Store {
                     face_ids: members.iter().map(|&i| rows[i].0).collect(),
                     chips: members
                         .iter()
-                        .take(4)
                         .map(|&i| ChipRef {
                             photo_id: rows[i].1.clone(),
                             face_index: rows[i].2,

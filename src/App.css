@@ -502,11 +502,6 @@ kbd {
   background: #755;
 }
 
-.people-more {
-  align-self: center;
-  color: #888;
-}
-
 .people-cluster {
   flex-direction: column;
   align-items: stretch !important;
@@ -569,8 +564,20 @@ kbd {
   outline: 2px solid #567;
 }
 
-.people-excluded img {
-  opacity: 0.3;
+.people-more {
+  align-self: center;
+  background: none;
+  border: 1px solid #333;
+  border-radius: 12px;
+  color: #999;
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.people-more:hover {
+  border-color: #567;
+  color: #bbb;
 }
 
 .people-cluster-row {

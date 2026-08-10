@@ -94,8 +94,12 @@ export default function PeoplePanel({
   const [expanded, setExpanded] = useState<number | null>(null);
   const [expandedFaces, setExpandedFaces] = useState<ChipRef[]>([]);
   const [renaming, setRenaming] = useState<number | null>(null);
-  /** Faces the user ✕'d out of a mixed cluster before naming it. */
+  /** Faces ✕'d out of a mixed cluster — removed from the row and from the
+   * next naming; cleared after each naming/dismiss so re-clustered faces
+   * never come back invisibly hidden. */
   const [excluded, setExcluded] = useState<Set<number>>(new Set());
+  /** Clusters the user expanded past the chip preview cap. */
+  const [openClusters, setOpenClusters] = useState<Set<number>>(new Set());
   const [mergePrompt, setMergePrompt] = useState<{
     source: PersonOut;
     targetId: number;
@@ -157,6 +161,9 @@ export default function PeoplePanel({
         opId: res.opId,
         label: `Named ${res.affectedFaceIds.length} faces “${res.person.name}”`,
       });
+      // The ✕'d faces stay unnamed and re-cluster on their own next refresh;
+      // the exclusion list has done its job.
+      setExcluded(new Set());
     } catch (e) {
       notify(`Naming failed — ${String(e)}`);
     }
@@ -164,9 +171,13 @@ export default function PeoplePanel({
   };
 
   const dismissCluster = async (cluster: FaceCluster) => {
+    // ✕'d faces are exempt from the dismiss too — they're a different
+    // someone, not part of "this group is not a person".
+    const ids = cluster.faceIds.filter((id) => !excluded.has(id));
     try {
-      const n = await setFacesIgnored(cluster.faceIds, true);
-      showUndo({ kind: 'dismiss', faceIds: cluster.faceIds, label: `Dismissed ${n} faces` });
+      const n = await setFacesIgnored(ids, true);
+      showUndo({ kind: 'dismiss', faceIds: ids, label: `Dismissed ${n} faces` });
+      setExcluded(new Set());
     } catch (e) {
       notify(String(e));
     }
@@ -384,63 +395,89 @@ export default function PeoplePanel({
             </div>
           )}
           <ul>
-            {clusters?.map((c) => (
-              <li key={c.faceIds[0]} className="people-cluster">
-                <div className="people-faces">
-                  {c.chips.map((chip) => (
-                    <span
-                      key={chip.faceId}
-                      className={`people-face${excluded.has(chip.faceId) ? ' people-excluded' : ''}`}
-                    >
-                      <FaceChip photoId={chip.photoId} faceIndex={chip.faceIndex} onJump={onJump} />
+            {clusters?.map((c) => {
+              const anchor = c.faceIds[0];
+              const kept = c.chips.filter((chip) => !excluded.has(chip.faceId));
+              const removedHere = c.chips.length - kept.length;
+              const open = openClusters.has(anchor);
+              const shown = open ? kept : kept.slice(0, 8);
+              return (
+                <li key={anchor} className="people-cluster">
+                  <div className="people-faces">
+                    {shown.map((chip) => (
+                      <span key={chip.faceId} className="people-face">
+                        <FaceChip
+                          photoId={chip.photoId}
+                          faceIndex={chip.faceIndex}
+                          onJump={onJump}
+                        />
+                        <button
+                          className="people-not"
+                          title="Not the same person — remove from this group"
+                          onClick={() =>
+                            setExcluded((prev) => new Set(prev).add(chip.faceId))
+                          }
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    ))}
+                    {kept.length > shown.length && (
                       <button
-                        className="people-not"
-                        title={
-                          excluded.has(chip.faceId)
-                            ? 'Include in naming again'
-                            : 'Not the same person — leave out when naming'
-                        }
+                        className="people-more"
+                        title="Show every face in this group"
                         onClick={() =>
-                          setExcluded((prev) => {
-                            const next = new Set(prev);
-                            if (!next.delete(chip.faceId)) next.add(chip.faceId);
-                            return next;
-                          })
+                          setOpenClusters((prev) => new Set(prev).add(anchor))
                         }
                       >
-                        ✕
+                        +{kept.length - shown.length} more
                       </button>
+                    )}
+                  </div>
+                  <div className="people-cluster-row">
+                    <span className="people-hint">
+                      seen in {c.photoCount} photo{c.photoCount === 1 ? '' : 's'}
+                      {removedHere > 0 && (
+                        <>
+                          {' · '}
+                          <button
+                            className="people-dim"
+                            title="Put the removed faces back into this group"
+                            onClick={() =>
+                              setExcluded((prev) => {
+                                const next = new Set(prev);
+                                for (const chip of c.chips) next.delete(chip.faceId);
+                                return next;
+                              })
+                            }
+                          >
+                            restore {removedHere} removed
+                          </button>
+                        </>
+                      )}
                     </span>
-                  ))}
-                  {c.size > c.chips.length && (
-                    <span className="people-more">+{c.size - c.chips.length}</span>
-                  )}
-                </div>
-                <div className="people-cluster-row">
-                  <span className="people-hint">
-                    seen in {c.photoCount} photo{c.photoCount === 1 ? '' : 's'}
-                  </span>
-                  <button
-                    className="people-dim"
-                    title="Statues, photos of photos, people you'll never label — hide this group"
-                    onClick={() => void dismissCluster(c)}
-                  >
-                    not a person / don't label
-                  </button>
-                </div>
-                <input
-                  className="people-input"
-                  placeholder="Who is this?"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      const input = e.target as HTMLInputElement;
-                      void nameCluster(c, input.value);
-                      input.value = '';
-                    }
-                  }}
-                />
-              </li>
-            ))}
+                    <button
+                      className="people-dim"
+                      title="Statues, photos of photos, people you'll never label — hide this group"
+                      onClick={() => void dismissCluster(c)}
+                    >
+                      not a person / don't label
+                    </button>
+                  </div>
+                  <input
+                    className="people-input"
+                    placeholder="Who is this?"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const input = e.target as HTMLInputElement;
+                        void nameCluster(c, input.value);
+                        input.value = '';
+                      }
+                    }}
+                  />
+                </li>
+              );
+            })}
           </ul>
 
           {undoToast && (
