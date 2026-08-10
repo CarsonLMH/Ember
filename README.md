@@ -3,7 +3,9 @@
 A fast, durable macOS photo-culling app for Fujifilm JPEG+RAF workflows.
 Born from one lost culling session too many: instant arrow-key flipping
 (p99 ≤ 50ms), verdicts that survive `kill -9`, a readable metadata panel,
-and fuzzy film-recipe matching. Single-user, local-only, keyboard-first.
+fuzzy film-recipe matching, and on-device face recognition (People panel on
+`p` — local-only, deletable, never written to your files). Single-user,
+local-only, keyboard-first.
 
 **SPEC.md** is the product spec; **CLAUDE.md** has the working conventions.
 
