@@ -13,6 +13,7 @@ import RecipeSwitcher from './components/RecipeSwitcher';
 import TagPalette from './components/TagPalette';
 import TagSwitcher from './components/TagSwitcher';
 import ExifPanel from './components/ExifPanel';
+import PeoplePanel from './components/PeoplePanel';
 import type { TrashedPhoto } from './lib/types';
 import './App.css';
 
@@ -213,6 +214,7 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [showPerf, setShowPerf] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
+  const [showPeople, setShowPeople] = useState(false);
   const [showCheat, setShowCheat] = useState(false);
   const [showRecipes, setShowRecipes] = useState(false);
   const [showTagPalette, setShowTagPalette] = useState(false);
@@ -270,6 +272,7 @@ export default function App() {
       if (e.key === 'Escape') {
         setShowCheat(false);
         setShowTrash(false);
+        setShowPeople(false);
         return;
       }
       const action = actionFor(e);
@@ -352,6 +355,10 @@ export default function App() {
           break;
         case 'tag_filter':
           setShowTagFilter((v) => !v);
+          break;
+        case 'people_panel':
+          setShowPeople((v) => !v);
+          setShowTrash(false); // same dock — one panel at a time
           break;
         case 'perf_hud':
           setShowPerf((v) => !v);
@@ -591,7 +598,10 @@ export default function App() {
             )}
             <button
               className="hud-trash-btn"
-              onClick={() => setShowTrash((v) => !v)}
+              onClick={() => {
+                setShowTrash((v) => !v);
+                setShowPeople(false); // same dock — one panel at a time
+              }}
               disabled={state.trashedCount === 0 && !showTrash}
             >
               trashed {state.trashedCount}
@@ -644,6 +654,13 @@ export default function App() {
 
       {showTrash && state.folderId !== null && (
         <TrashPanel folderId={state.folderId} onClose={() => setShowTrash(false)} />
+      )}
+      {showPeople && state.folderId !== null && (
+        <PeoplePanel
+          folderId={state.folderId}
+          onClose={() => setShowPeople(false)}
+          notify={(m) => session.notify(m)}
+        />
       )}
       {showCheat && <CheatSheet onClose={() => setShowCheat(false)} />}
       {showRecipes && <RecipeSwitcher onClose={() => setShowRecipes(false)} />}

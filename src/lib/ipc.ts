@@ -182,6 +182,123 @@ export function facesSpikeStats(): Promise<FacesSpikeStats> {
   return invoke<FacesSpikeStats>('faces_spike_stats');
 }
 
+// ---------- faces (SPEC §14) ----------
+
+export interface PersonOut {
+  id: number;
+  name: string;
+  hidden: boolean;
+  folderCount: number;
+  repPhotoId: string | null;
+  repFaceIndex: number | null;
+}
+
+export interface ChipRef {
+  photoId: string;
+  faceIndex: number;
+  faceId: number;
+}
+
+export interface FaceCluster {
+  faceIds: number[];
+  chips: ChipRef[];
+  size: number;
+  photoCount: number;
+}
+
+export interface FaceOut {
+  faceId: number;
+  photoId: string;
+  faceIndex: number;
+  rect: [number, number, number, number];
+  detScore: number;
+  personId: number | null;
+  personName: string | null;
+  assignedBy: 'auto' | 'user' | null;
+  ignored: boolean;
+}
+
+export interface FaceScanStatus {
+  enabled: boolean;
+  total: number;
+  scanned: number;
+  errors: number;
+  engineError: string | null;
+}
+
+export interface NamingResponse {
+  person: PersonOut;
+  affectedFaceIds: number[];
+  opId: number;
+}
+
+export interface FacesProgress {
+  folderId: number | null;
+  scanned: number;
+  total: number;
+  photoIds: string[];
+}
+
+export function faceClusters(folderId: number): Promise<FaceCluster[]> {
+  return invoke<FaceCluster[]>('face_clusters', { folderId });
+}
+
+export function faceSetName(faceIds: number[], name: string): Promise<NamingResponse> {
+  return invoke<NamingResponse>('face_set_name', { faceIds, name });
+}
+
+export function undoNaming(opId: number): Promise<number> {
+  return invoke<number>('undo_naming', { opId });
+}
+
+export function faceAssign(faceId: number, personId: number | null): Promise<void> {
+  return invoke('face_assign', { faceId, personId });
+}
+
+export function faceReject(faceId: number, personId: number): Promise<void> {
+  return invoke('face_reject', { faceId, personId });
+}
+
+export function renamePerson(personId: number, name: string): Promise<void> {
+  return invoke('rename_person', { personId, name });
+}
+
+export function listPersons(folderId: number): Promise<PersonOut[]> {
+  return invoke<PersonOut[]>('list_persons', { folderId });
+}
+
+export function personFaces(personId: number, folderId: number): Promise<ChipRef[]> {
+  return invoke<ChipRef[]>('person_faces', { personId, folderId });
+}
+
+export function personMap(folderId: number): Promise<Record<string, number[]>> {
+  return invoke<Record<string, number[]>>('person_map', { folderId });
+}
+
+export function facesForPhoto(photoId: string): Promise<FaceOut[] | null> {
+  return invoke<FaceOut[] | null>('faces_for_photo', { photoId });
+}
+
+export function faceScanStatus(folderId: number): Promise<FaceScanStatus> {
+  return invoke<FaceScanStatus>('face_scan_status', { folderId });
+}
+
+export function deleteFaceData(): Promise<void> {
+  return invoke('delete_face_data');
+}
+
+export function setFacesEnabled(enabled: boolean): Promise<void> {
+  return invoke('set_faces_enabled', { enabled });
+}
+
+export function onFacesProgress(cb: (p: FacesProgress) => void): Promise<UnlistenFn> {
+  return listen<FacesProgress>('faces-progress', (e) => cb(e.payload));
+}
+
+export function faceChipUrl(photoId: string, faceIndex: number): string {
+  return `photo://localhost/face/${photoId}/${faceIndex}`;
+}
+
 export function quitApp(): Promise<void> {
   return invoke('quit_app');
 }
