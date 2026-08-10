@@ -206,6 +206,13 @@ export interface FaceCluster {
   photoCount: number;
 }
 
+export interface FaceClusters {
+  /** Recurring groups (≥2 faces), largest first. */
+  clusters: FaceCluster[];
+  /** Faces seen only once — junk detections and one-off strangers. */
+  loose: ChipRef[];
+}
+
 export interface FaceOut {
   faceId: number;
   photoId: string;
@@ -239,8 +246,8 @@ export interface FacesProgress {
   photoIds: string[];
 }
 
-export function faceClusters(folderId: number): Promise<FaceCluster[]> {
-  return invoke<FaceCluster[]>('face_clusters', { folderId });
+export function faceClusters(folderId: number): Promise<FaceClusters> {
+  return invoke<FaceClusters>('face_clusters', { folderId });
 }
 
 export function faceSetName(faceIds: number[], name: string): Promise<NamingResponse> {

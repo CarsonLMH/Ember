@@ -587,6 +587,12 @@ kbd {
   gap: 8px;
 }
 
+.people-loose {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #2a2a2a;
+}
+
 .people-confirm {
   display: flex;
   flex-direction: column;

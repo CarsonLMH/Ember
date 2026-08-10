@@ -17,6 +17,7 @@ import {
   undoNaming,
   type ChipRef,
   type FaceCluster,
+  type FaceClusters,
   type FaceScanStatus,
   type PersonOut,
 } from '../lib/ipc';
@@ -90,7 +91,8 @@ export default function PeoplePanel({
 }) {
   const [status, setStatus] = useState<FaceScanStatus | null>(null);
   const [persons, setPersons] = useState<PersonOut[] | null>(null);
-  const [clusters, setClusters] = useState<FaceCluster[] | null>(null);
+  const [clusters, setClusters] = useState<FaceClusters | null>(null);
+  const [showLoose, setShowLoose] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [expandedFaces, setExpandedFaces] = useState<ChipRef[]>([]);
   const [renaming, setRenaming] = useState<number | null>(null);
@@ -178,6 +180,36 @@ export default function PeoplePanel({
       const n = await setFacesIgnored(ids, true);
       showUndo({ kind: 'dismiss', faceIds: ids, label: `Dismissed ${n} faces` });
       setExcluded(new Set());
+    } catch (e) {
+      notify(String(e));
+    }
+    load();
+  };
+
+  /** The faces just ✕'d out of a group are often exactly the ones the user
+   * never wants to label — finish the thought in one click. */
+  const dismissRemoved = async (cluster: FaceCluster) => {
+    const ids = cluster.faceIds.filter((id) => excluded.has(id));
+    if (!ids.length) return;
+    try {
+      const n = await setFacesIgnored(ids, true);
+      showUndo({ kind: 'dismiss', faceIds: ids, label: `Dismissed ${n} removed faces` });
+      setExcluded((prev) => {
+        const next = new Set(prev);
+        for (const id of ids) next.delete(id);
+        return next;
+      });
+    } catch (e) {
+      notify(String(e));
+    }
+    load();
+  };
+
+  const dismissLoose = async (ids: number[]) => {
+    if (!ids.length) return;
+    try {
+      const n = await setFacesIgnored(ids, true);
+      showUndo({ kind: 'dismiss', faceIds: ids, label: `Dismissed ${n} faces` });
     } catch (e) {
       notify(String(e));
     }
@@ -386,16 +418,20 @@ export default function PeoplePanel({
               ))}
           </ul>
 
-          {clusters && clusters.length > 0 && <div className="people-section">Unnamed</div>}
-          {clusters?.length === 0 && persons?.every((p) => p.folderCount === 0) && !scanning && (
-            <div className="trash-empty">
-              {status && status.scanned === 0
-                ? 'No faces indexed yet.'
-                : 'No recurring faces found in this folder.'}
-            </div>
+          {clusters && clusters.clusters.length > 0 && (
+            <div className="people-section">Unnamed</div>
           )}
+          {clusters?.clusters.length === 0 &&
+            persons?.every((p) => p.folderCount === 0) &&
+            !scanning && (
+              <div className="trash-empty">
+                {status && status.scanned === 0
+                  ? 'No faces indexed yet.'
+                  : 'No recurring faces found in this folder.'}
+              </div>
+            )}
           <ul>
-            {clusters?.map((c) => {
+            {clusters?.clusters.map((c) => {
               const anchor = c.faceIds[0];
               const kept = c.chips.filter((chip) => !excluded.has(chip.faceId));
               const removedHere = c.chips.length - kept.length;
@@ -451,7 +487,15 @@ export default function PeoplePanel({
                               })
                             }
                           >
-                            restore {removedHere} removed
+                            restore {removedHere}
+                          </button>
+                          {' · '}
+                          <button
+                            className="people-dim"
+                            title="The removed faces aren't people you'll label — hide them"
+                            onClick={() => void dismissRemoved(c)}
+                          >
+                            don't label removed
                           </button>
                         </>
                       )}
@@ -479,6 +523,40 @@ export default function PeoplePanel({
               );
             })}
           </ul>
+
+          {clusters && clusters.loose.length > 0 && (
+            <div className="people-loose">
+              <div className="people-cluster-row">
+                <button className="people-dim" onClick={() => setShowLoose((v) => !v)}>
+                  {showLoose ? 'hide' : 'show'} {clusters.loose.length} face
+                  {clusters.loose.length === 1 ? '' : 's'} seen only once
+                </button>
+                <button
+                  className="people-dim"
+                  title="One-off strangers and junk detections — hide them all"
+                  onClick={() => void dismissLoose(clusters.loose.map((c) => c.faceId))}
+                >
+                  don't label any
+                </button>
+              </div>
+              {showLoose && (
+                <div className="people-faces">
+                  {clusters.loose.map((chip) => (
+                    <span key={chip.faceId} className="people-face">
+                      <FaceChip photoId={chip.photoId} faceIndex={chip.faceIndex} onJump={onJump} />
+                      <button
+                        className="people-not"
+                        title="Don't label this face"
+                        onClick={() => void dismissLoose([chip.faceId])}
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {undoToast && (
             <div className="people-toast">

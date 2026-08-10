@@ -742,6 +742,17 @@ pub struct ClusterOut {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ClustersOut {
+    /// Recurring groups (≥2 faces), largest first.
+    pub clusters: Vec<ClusterOut>,
+    /// Singletons — faces resembling nothing else in the folder (mostly junk
+    /// detections and one-off strangers). Without this list they'd be
+    /// invisible and undismissable forever.
+    pub loose: Vec<ChipRef>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FaceOut {
     pub face_id: i64,
     pub photo_id: String,
@@ -865,17 +876,16 @@ impl Store {
         })
     }
 
-    /// Unnamed recurring-face clusters for the People panel: current-gen,
-    /// scan-ok, unassigned, unignored, untrashed — clustered greedily in
-    /// det_score order, recurring (≥2) only, largest first.
-    pub fn face_clusters(
-        &self,
-        folder_id: i64,
-        threshold: f32,
-    ) -> rusqlite::Result<Vec<ClusterOut>> {
+    /// Unnamed faces for the People panel: current-gen, scan-ok, unassigned,
+    /// unignored, untrashed — clustered greedily in det_score order.
+    /// Recurring groups (≥2, largest first) plus the loose singletons.
+    pub fn face_clusters(&self, folder_id: i64, threshold: f32) -> rusqlite::Result<ClustersOut> {
         let conn = self.lock_conn();
         let Some((gen, ..)) = current_gen(&conn)? else {
-            return Ok(Vec::new());
+            return Ok(ClustersOut {
+                clusters: Vec::new(),
+                loose: Vec::new(),
+            });
         };
         let mut stmt = conn.prepare(
             "SELECT f.id, f.photo_id, f.face_index, f.embedding
@@ -896,33 +906,34 @@ impl Store {
             .iter()
             .map(|(.., blob)| facedet::blob_to_embedding(blob).unwrap_or_default())
             .collect();
-        let mut clusters: Vec<ClusterOut> = facedet::cluster_greedy(&embeddings, threshold)
-            .into_iter()
-            .filter(|c| c.len() >= 2)
-            .map(|members| {
-                let photo_count = members
-                    .iter()
-                    .map(|&i| rows[i].1.as_str())
-                    .collect::<std::collections::HashSet<_>>()
-                    .len() as i64;
-                ClusterOut {
-                    face_ids: members.iter().map(|&i| rows[i].0).collect(),
-                    chips: members
-                        .iter()
-                        .map(|&i| ChipRef {
-                            photo_id: rows[i].1.clone(),
-                            face_index: rows[i].2,
-                            face_id: rows[i].0,
-                        })
-                        .collect(),
-                    size: members.len() as i64,
-                    photo_count,
-                }
-            })
-            .collect();
+        let chip = |i: usize| ChipRef {
+            photo_id: rows[i].1.clone(),
+            face_index: rows[i].2,
+            face_id: rows[i].0,
+        };
+        let mut clusters: Vec<ClusterOut> = Vec::new();
+        let mut loose: Vec<ChipRef> = Vec::new();
+        for members in facedet::cluster_greedy(&embeddings, threshold) {
+            if members.len() < 2 {
+                loose.push(chip(members[0]));
+                continue;
+            }
+            let photo_count = members
+                .iter()
+                .map(|&i| rows[i].1.as_str())
+                .collect::<std::collections::HashSet<_>>()
+                .len() as i64;
+            clusters.push(ClusterOut {
+                face_ids: members.iter().map(|&i| rows[i].0).collect(),
+                chips: members.iter().map(|&i| chip(i)).collect(),
+                size: members.len() as i64,
+                photo_count,
+            });
+        }
         clusters.sort_by_key(|c| std::cmp::Reverse(c.size));
         clusters.truncate(30);
-        Ok(clusters)
+        loose.truncate(200);
+        Ok(ClustersOut { clusters, loose })
     }
 
     /// Name faces: find-or-create by normalized name, assign as 'user'.
@@ -1751,7 +1762,7 @@ mod tests {
         assert_eq!(faces[0].person_id, Some(nati.person.id));
 
         // Mixed-generation exclusion: clustering only sees current-gen rows.
-        let clusters = store.face_clusters(folder_id, 0.4).unwrap();
+        let clusters = store.face_clusters(folder_id, 0.4).unwrap().clusters;
         for c in &clusters {
             for chip in &c.chips {
                 let g: i64 = store
@@ -1915,16 +1926,21 @@ mod tests {
             let snap = snapshot(&worker, photo, gen).unwrap();
             commit_scan(&mut worker, photo, &snap, &faces, &[], 1, 1).unwrap();
         }
-        let clusters = store.face_clusters(folder_id, 0.9).unwrap();
-        assert_eq!(clusters.len(), 1, "only the recurring face clusters");
-        assert_eq!(clusters[0].size, 2);
-        assert_eq!(clusters[0].photo_count, 2);
+        let out = store.face_clusters(folder_id, 0.9).unwrap();
+        assert_eq!(out.clusters.len(), 1, "only the recurring face clusters");
+        assert_eq!(out.clusters[0].size, 2);
+        assert_eq!(out.clusters[0].photo_count, 2);
+        assert_eq!(
+            out.loose.len(),
+            2,
+            "the two non-recurring faces surface as loose singles"
+        );
 
         // Trash p2 → its face leaves clusters and counts.
         let payload = crate::store::TrashPayload::default();
         store.record_trash(folder_id, "p2", &payload).unwrap();
-        let clusters = store.face_clusters(folder_id, 0.9).unwrap();
-        assert!(clusters.is_empty(), "trashed photos leave the panel");
+        let out = store.face_clusters(folder_id, 0.9).unwrap();
+        assert!(out.clusters.is_empty(), "trashed photos leave the panel");
 
         // person_map excludes trashed too.
         let ids: Vec<i64> = {
@@ -2128,11 +2144,9 @@ mod tests {
             0,
             "ignored faces are invisible to the sweep"
         );
-        assert!(store
-            .face_clusters(folder_id, 0.0)
-            .unwrap()
-            .iter()
-            .all(|c| !c.face_ids.contains(&p2_face)));
+        let out = store.face_clusters(folder_id, 0.0).unwrap();
+        assert!(out.clusters.iter().all(|c| !c.face_ids.contains(&p2_face)));
+        assert!(out.loose.iter().all(|c| c.face_id != p2_face));
 
         // Reversible: un-ignore returns the face to Unnamed (not to Nati —
         // the assignment was deliberately dropped).

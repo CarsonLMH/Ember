@@ -864,7 +864,7 @@ fn faces_spike_stats() -> serde_json::Value {
 fn face_clusters(
     state: tauri::State<'_, AppState>,
     folder_id: i64,
-) -> Result<Vec<facestore::ClusterOut>, String> {
+) -> Result<facestore::ClustersOut, String> {
     state
         .store
         .face_clusters(folder_id, state.faces_cfg.cluster_threshold)
