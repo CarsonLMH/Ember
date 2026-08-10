@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   deleteFaceData,
+  faceCalibrationReport,
   faceChipUrl,
   faceClusters,
   faceReject,
@@ -208,6 +209,20 @@ export default function PeoplePanel({
     load();
   };
 
+  const calibrate = async () => {
+    try {
+      const r = await faceCalibrationReport();
+      const s = r.summary;
+      const fmt = (v: number | null) => (v === null ? '—' : v.toFixed(3));
+      notify(
+        `Calibration saved (${s.positives} pos / ${s.negatives} neg): ` +
+          `same-person p5=${fmt(s.posP5)}, other-person p95=${fmt(s.negP95)} → ${r.path}`,
+      );
+    } catch (e) {
+      notify(String(e));
+    }
+  };
+
   const scanning = status && status.enabled && status.scanned < status.total;
 
   return (
@@ -382,6 +397,13 @@ export default function PeoplePanel({
                 </button>
                 <button className="people-danger" onClick={() => setConfirmDelete(true)}>
                   Delete all face data
+                </button>
+                <button
+                  className="people-dim"
+                  title="Save a score-distribution report for tuning recognition thresholds"
+                  onClick={() => void calibrate()}
+                >
+                  calibration report
                 </button>
               </>
             )}

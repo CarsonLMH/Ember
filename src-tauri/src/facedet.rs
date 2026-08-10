@@ -309,6 +309,86 @@ pub fn cluster_greedy(embeddings: &[Vec<f32>], threshold: f32) -> Vec<Vec<usize>
     clusters
 }
 
+// ---------- auto-recognition (Slice B) ----------
+
+/// Pick up to `max` diverse exemplars, greedy max-min: seed with the first
+/// embedding (caller orders by det_score, so the seed is a strong face),
+/// then repeatedly add the embedding farthest (min-cosine) from the picks.
+/// Diversity beats redundancy: five near-identical frontal shots recognize
+/// worse than frontal + profile + glasses + shade + distance.
+pub fn select_exemplars(embeddings: &[Vec<f32>], max: usize) -> Vec<usize> {
+    if embeddings.is_empty() || max == 0 {
+        return Vec::new();
+    }
+    let mut picked = vec![0usize];
+    while picked.len() < max.min(embeddings.len()) {
+        let next = (0..embeddings.len())
+            .filter(|i| !picked.contains(i))
+            .max_by(|&a, &b| {
+                let worst = |i: usize| {
+                    picked
+                        .iter()
+                        .map(|&p| cosine(&embeddings[p], &embeddings[i]))
+                        .fold(f32::NEG_INFINITY, f32::max)
+                };
+                // Farthest = smallest max-similarity to the current picks.
+                worst(b).total_cmp(&worst(a))
+            });
+        match next {
+            Some(i) => picked.push(i),
+            None => break,
+        }
+    }
+    picked
+}
+
+pub struct PersonProtos {
+    pub person_id: i64,
+    pub exemplars: Vec<Vec<f32>>,
+}
+
+/// Auto-assignment that cannot cascade: score = max cosine vs a person's
+/// (user-confirmed-only) exemplars; assign only when the best clears
+/// `threshold` AND leads the runner-up by `margin`. Rejected persons are
+/// ABSOLUTE — excluded from best and runner-up alike ("not X" means X's
+/// score is meaningless for this face, not merely losing).
+pub fn match_face(
+    embedding: &[f32],
+    protos: &[PersonProtos],
+    rejected: &std::collections::HashSet<i64>,
+    threshold: f32,
+    margin: f32,
+) -> Option<(i64, f32)> {
+    let mut best: Option<(i64, f32)> = None;
+    let mut second: f32 = f32::NEG_INFINITY;
+    for p in protos {
+        if rejected.contains(&p.person_id) || p.exemplars.is_empty() {
+            continue;
+        }
+        let score = p
+            .exemplars
+            .iter()
+            .map(|e| cosine(embedding, e))
+            .fold(f32::NEG_INFINITY, f32::max);
+        match best {
+            Some((_, b)) if score > b => {
+                second = b;
+                best = Some((p.person_id, score));
+            }
+            Some((_, b)) => second = second.max(score.min(b)),
+            None => best = Some((p.person_id, score)),
+        }
+    }
+    let (person, score) = best?;
+    if score < threshold {
+        return None;
+    }
+    if second > f32::NEG_INFINITY && score - second < margin {
+        return None; // too close to call — leave it to the human
+    }
+    Some((person, score))
+}
+
 // ---------- carry-over correspondence (rescan / model change) ----------
 
 /// Confident-match thresholds for transferring user state old→new rows.
@@ -607,6 +687,71 @@ mod tests {
         }];
         let pairs = match_carry_over(&old_amb, &new_amb);
         assert_eq!(pairs, vec![(0, 0)], "contested new face goes to best IoU");
+    }
+
+    #[test]
+    fn exemplar_selection_prefers_diversity() {
+        let e = |x: f32, y: f32| {
+            let mut v = vec![x, y];
+            l2_normalize(&mut v);
+            v
+        };
+        // Three near-duplicates of the seed + two genuinely different poses.
+        let embs = vec![
+            e(1.0, 0.0),
+            e(0.99, 0.01),
+            e(0.98, 0.02),
+            e(0.0, 1.0),
+            e(-1.0, 0.5),
+        ];
+        let picked = select_exemplars(&embs, 3);
+        assert_eq!(picked[0], 0, "seed is the strongest face");
+        assert!(picked.contains(&3) && picked.contains(&4), "{picked:?}");
+        // Cap respected; degenerate inputs safe.
+        assert_eq!(select_exemplars(&embs, 10).len(), 5);
+        assert!(select_exemplars(&[], 5).is_empty());
+    }
+
+    #[test]
+    fn match_face_threshold_margin_and_absolute_rejection() {
+        let e = |x: f32, y: f32| {
+            let mut v = vec![x, y];
+            l2_normalize(&mut v);
+            v
+        };
+        let protos = vec![
+            PersonProtos {
+                person_id: 1,
+                exemplars: vec![e(1.0, 0.0)],
+            },
+            PersonProtos {
+                person_id: 2,
+                exemplars: vec![e(0.0, 1.0)],
+            },
+        ];
+        let none = std::collections::HashSet::new();
+        // Clear winner above threshold.
+        let q = e(0.95, 0.1);
+        let (p, s) = match_face(&q, &protos, &none, 0.40, 0.05).unwrap();
+        assert_eq!(p, 1);
+        assert!(s > 0.9);
+        // Below threshold → no assignment.
+        assert!(match_face(&e(0.3, 0.2), &protos, &none, 0.99, 0.05).is_none());
+        // Equidistant between two persons → margin blocks it.
+        let mid = e(1.0, 1.0);
+        assert!(
+            match_face(&mid, &protos, &none, 0.40, 0.05).is_none(),
+            "ambiguous face must stay unassigned"
+        );
+        // …but with the runner-up REJECTED, its score is meaningless and the
+        // face assigns cleanly (rejections are absolute, both directions).
+        let rej2: std::collections::HashSet<i64> = [2].into();
+        let (p, _) = match_face(&mid, &protos, &rej2, 0.40, 0.05).unwrap();
+        assert_eq!(p, 1);
+        // Rejecting the winner blocks it even at similarity 1.0.
+        let rej1: std::collections::HashSet<i64> = [1].into();
+        let got = match_face(&e(1.0, 0.0), &protos, &rej1, 0.40, 0.05);
+        assert!(got.is_none() || got.unwrap().0 != 1, "\"not X\" is final");
     }
 
     #[test]

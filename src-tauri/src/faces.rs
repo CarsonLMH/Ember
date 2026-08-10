@@ -68,6 +68,13 @@ static DISCARDS: AtomicU64 = AtomicU64::new(0);
 static ENGINE_ERROR: Mutex<Option<String>> = Mutex::new(None);
 static STOP: AtomicBool = AtomicBool::new(false);
 static IDLE: AtomicBool = AtomicBool::new(true);
+/// Post-naming sweep request (set by face_set_name; drained by the worker).
+static SWEEP: AtomicBool = AtomicBool::new(false);
+
+/// Ask the worker to run the global auto-assign sweep when it next idles.
+pub fn request_sweep() {
+    SWEEP.store(true, Ordering::SeqCst);
+}
 
 pub fn force_enabled() -> bool {
     std::env::var("EMBER_FACES_FORCE")
@@ -465,6 +472,12 @@ pub fn spawn_worker(
                         pass_done.clear();
                         continue;
                     }
+                    // Scanning outranks sweeping; a requested sweep runs when
+                    // the queue is otherwise empty.
+                    if SWEEP.swap(false, Ordering::SeqCst) && gen > 0 {
+                        run_sweep(&app, &mut conn, gen, &cfg);
+                        continue;
+                    }
                     IDLE.store(true, Ordering::SeqCst);
                     std::thread::sleep(Duration::from_millis(500));
                     continue;
@@ -503,7 +516,14 @@ pub fn spawn_worker(
                     }
                 }
                 let id = entry.id.clone();
-                match process_photo(&mut conn, engine.as_mut().unwrap(), &preview, &entry, gen) {
+                match process_photo(
+                    &mut conn,
+                    engine.as_mut().unwrap(),
+                    &preview,
+                    &entry,
+                    gen,
+                    &cfg,
+                ) {
                     Ok(outcome) => {
                         backoff.remove(&id);
                         if outcome == CommitOutcome::Discarded {
@@ -553,6 +573,7 @@ fn process_photo(
     preview: &PreviewState,
     entry: &crate::scanner::PhotoEntry,
     gen: i64,
+    cfg: &FacesCfg,
 ) -> Result<CommitOutcome, String> {
     let id = &entry.id;
     let (mtime, size) = display_stat(entry).ok_or("display file missing")?;
@@ -587,13 +608,94 @@ fn process_photo(
             embedding: f.embedding.clone(),
         })
         .collect();
-    let outcome =
-        facestore::commit_scan(conn, id, &snap, &new, mtime, size).map_err(|e| e.to_string())?;
+
+    // Embed-time matching (Slice B), computed lock-free before the commit:
+    // faces that will carry an assignment or the ignored flag are skipped;
+    // carried rejections are absolute. Guards inside commit_scan discard the
+    // whole result if anything moved underneath us.
+    let plan = facestore::plan_carry_over(&snap, &new);
+    let protos = facestore::person_prototypes(conn, gen, 5).map_err(|e| e.to_string())?;
+    let empty = std::collections::HashSet::new();
+    let proposals: Vec<Option<(i64, f32)>> = new
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            if protos.is_empty() {
+                return None;
+            }
+            let carried = plan.get(&i).map(|&oi| &snap.old[oi]);
+            match carried {
+                Some(c) if c.person_id.is_some() || c.ignored => None,
+                other => {
+                    let rejected: &std::collections::HashSet<i64> = match other {
+                        Some(c) if !c.rejections.is_empty() => {
+                            // Transferred "not X" excludes X here too.
+                            return facedet::match_face(
+                                &f.embedding,
+                                &protos,
+                                &c.rejections.iter().copied().collect(),
+                                cfg.auto_assign_threshold,
+                                cfg.auto_assign_margin,
+                            );
+                        }
+                        _ => &empty,
+                    };
+                    facedet::match_face(
+                        &f.embedding,
+                        &protos,
+                        rejected,
+                        cfg.auto_assign_threshold,
+                        cfg.auto_assign_margin,
+                    )
+                }
+            }
+        })
+        .collect();
+
+    let outcome = facestore::commit_scan(conn, id, &snap, &new, &proposals, mtime, size)
+        .map_err(|e| e.to_string())?;
     if outcome == CommitOutcome::Committed {
         let rects: Vec<[f32; 4]> = faces.iter().map(|f| f.rect).collect();
         bake_chips(preview, id, &img, &rects, old_count);
     }
     Ok(outcome)
+}
+
+/// Post-naming global sweep: match every remaining unassigned face against
+/// the (user-confirmed) prototypes, short per-photo conditional commits,
+/// then one progress event so the panel refreshes.
+fn run_sweep(app: &tauri::AppHandle, conn: &mut rusqlite::Connection, gen: i64, cfg: &FacesCfg) {
+    let protos = match facestore::person_prototypes(conn, gen, 5) {
+        Ok(p) if !p.is_empty() => p,
+        _ => return,
+    };
+    let candidates = facestore::sweep_candidates(conn, gen).unwrap_or_default();
+    let mut assigned = 0usize;
+    let mut touched: Vec<String> = Vec::new();
+    for photo_id in candidates {
+        if STOP.load(Ordering::SeqCst) || !facestore::index_enabled(conn).unwrap_or(false) {
+            break;
+        }
+        match facestore::sweep_photo(
+            conn,
+            &photo_id,
+            gen,
+            &protos,
+            cfg.auto_assign_threshold,
+            cfg.auto_assign_margin,
+        ) {
+            Ok(n) if n > 0 => {
+                assigned += n;
+                touched.push(photo_id);
+            }
+            _ => {}
+        }
+    }
+    if assigned > 0 {
+        eprintln!("faces: sweep auto-assigned {assigned} faces");
+        let mut batch = touched;
+        flush_progress(app, conn, &mut batch);
+    }
 }
 
 /// Emit `faces-progress` for the batch's folder — the panel refetches status
@@ -691,6 +793,7 @@ mod tests {
                         embedding: e,
                     },
                 ],
+                &[],
                 1,
                 1,
             )

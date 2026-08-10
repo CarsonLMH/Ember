@@ -292,6 +292,21 @@ export function faceScanStatus(folderId: number): Promise<FaceScanStatus> {
   return invoke<FaceScanStatus>('face_scan_status', { folderId });
 }
 
+export interface CalibrationSummary {
+  positives: number;
+  posMin: number | null;
+  posP5: number | null;
+  posMedian: number | null;
+  negatives: number;
+  negP95: number | null;
+  negMax: number | null;
+}
+
+/** Score-distribution report for tuning auto-recognition thresholds. */
+export function faceCalibrationReport(): Promise<{ path: string; summary: CalibrationSummary }> {
+  return invoke('face_calibration_report');
+}
+
 export function deleteFaceData(): Promise<void> {
   return invoke('delete_face_data');
 }

@@ -556,6 +556,11 @@ kbd {
   color: #daa;
 }
 
+.people-dim {
+  color: #777;
+  font-size: 11px;
+}
+
 .people-confirm {
   display: flex;
   flex-direction: column;

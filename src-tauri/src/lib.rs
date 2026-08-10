@@ -891,10 +891,48 @@ fn face_set_name(
         let oldest = *ops.keys().min().unwrap();
         ops.remove(&oldest);
     }
+    // Slice B: freshly-confirmed faces are new prototypes — sweep the rest.
+    faces::request_sweep();
     Ok(serde_json::json!({
         "person": result.person,
         "affectedFaceIds": result.affected_face_ids,
         "opId": op_id,
+    }))
+}
+
+/// Score-distribution report for threshold calibration (plan Slice B) —
+/// written next to the perf reports; the summary comes back for the notice.
+#[tauri::command]
+fn face_calibration_report(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let report = {
+        let conn = state.store.lock_conn();
+        let Some((gen, ..)) = facestore::current_gen(&conn).map_err(|e| e.to_string())? else {
+            return Err("no photos indexed yet".into());
+        };
+        facestore::calibration_data(&conn, gen).map_err(|e| e.to_string())?
+    };
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("perf-reports");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let path = dir.join(format!("faces-calibration-{ts}.json"));
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "path": path.to_string_lossy(),
+        "summary": report["summary"],
     }))
 }
 
@@ -1202,6 +1240,7 @@ pub fn run() {
             person_map,
             faces_for_photo,
             face_scan_status,
+            face_calibration_report,
             delete_face_data,
             set_faces_enabled,
             quit_app,

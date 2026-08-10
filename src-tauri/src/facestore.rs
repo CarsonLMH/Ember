@@ -258,20 +258,10 @@ pub fn snapshot(conn: &Connection, photo_id: &str, gen: i64) -> rusqlite::Result
     })
 }
 
-/// The one write path for scan results — pixel invalidation, manual rescan
-/// and model change all commit through here. Guards checked INSIDE the
-/// transaction; delete-then-insert (UNIQUE(photo_id, face_index) forbids
-/// coexistence and this order is rollback-safe); rejections re-keyed to the
-/// replacement faces so "not X" survives.
-pub fn commit_scan(
-    conn: &mut Connection,
-    photo_id: &str,
-    snap: &ScanSnapshot,
-    new: &[NewFace],
-    mtime: i64,
-    size: i64,
-) -> rusqlite::Result<CommitOutcome> {
-    // Correspondence computed before the write, outside the transaction.
+/// Old→new correspondence for one photo's reprocess, deterministic on its
+/// inputs — computed lock-free by the worker (which also derives embed-time
+/// match proposals from it) and recomputed identically inside `commit_scan`.
+pub fn plan_carry_over(snap: &ScanSnapshot, new: &[NewFace]) -> HashMap<usize, usize> {
     let old_sides: Vec<facedet::CarrySide> = snap
         .old
         .iter()
@@ -289,8 +279,30 @@ pub fn commit_scan(
             embedding: Some(&f.embedding),
         })
         .collect();
-    let pairs = facedet::match_carry_over(&old_sides, &new_sides);
-    let by_new: HashMap<usize, usize> = pairs.iter().map(|&(o, n)| (n, o)).collect();
+    facedet::match_carry_over(&old_sides, &new_sides)
+        .into_iter()
+        .map(|(o, n)| (n, o))
+        .collect()
+}
+
+/// The one write path for scan results — pixel invalidation, manual rescan
+/// and model change all commit through here. Guards checked INSIDE the
+/// transaction; delete-then-insert (UNIQUE(photo_id, face_index) forbids
+/// coexistence and this order is rollback-safe); rejections re-keyed to the
+/// replacement faces so "not X" survives. `proposals` are the worker's
+/// lock-free embed-time match results (Slice B), applied only to faces that
+/// carried no assignment; empty slice = no auto-assignment.
+pub fn commit_scan(
+    conn: &mut Connection,
+    photo_id: &str,
+    snap: &ScanSnapshot,
+    new: &[NewFace],
+    proposals: &[Option<(i64, f32)>],
+    mtime: i64,
+    size: i64,
+) -> rusqlite::Result<CommitOutcome> {
+    // Correspondence computed before the write, outside the transaction.
+    let by_new = plan_carry_over(snap, new);
 
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     // Conditional guards — any mismatch: discard, never overwrite newer truth.
@@ -312,6 +324,21 @@ pub fn commit_scan(
         )?;
         for (i, f) in new.iter().enumerate() {
             let carried = by_new.get(&i).map(|&oi| &snap.old[oi]);
+            // Embed-time auto-assignment fills only faces that carried
+            // nothing: carried user/auto state and carried `ignored` win.
+            let auto = match carried {
+                Some(c) if c.person_id.is_some() || c.ignored => None,
+                _ => proposals.get(i).copied().flatten(),
+            };
+            let (person, by, sim): (Option<i64>, Option<String>, Option<f64>) = match carried {
+                Some(c) if c.person_id.is_some() => {
+                    (c.person_id, c.assigned_by.clone(), c.similarity)
+                }
+                _ => match auto {
+                    Some((pid, score)) => (Some(pid), Some("auto".into()), Some(score as f64)),
+                    None => (None, None, None),
+                },
+            };
             insert.execute(params![
                 photo_id,
                 i as i64,
@@ -322,9 +349,9 @@ pub fn commit_scan(
                 f.det_score,
                 facedet::embedding_to_blob(&f.embedding),
                 snap.gen,
-                carried.and_then(|c| c.person_id),
-                carried.and_then(|c| c.assigned_by.clone()),
-                carried.and_then(|c| c.similarity),
+                person,
+                by,
+                sim,
                 carried.map(|c| c.ignored as i64).unwrap_or(0),
             ])?;
             new_ids.push(tx.last_insert_rowid());
@@ -381,6 +408,269 @@ pub fn record_scan_error(
         params![photo_id, gen, err, now_ms()],
     )?;
     Ok(())
+}
+
+// ---------- auto-recognition data (Slice B) ----------
+
+/// Matching prototypes: USER-CONFIRMED faces only, current generation, up to
+/// `max_exemplars` per person picked for diversity. Auto-assigned faces never
+/// train future matches — one false positive must not move anyone's anchor.
+pub fn person_prototypes(
+    conn: &Connection,
+    gen: i64,
+    max_exemplars: usize,
+) -> rusqlite::Result<Vec<facedet::PersonProtos>> {
+    let mut stmt = conn.prepare(
+        "SELECT person_id, embedding FROM faces
+         WHERE person_id IS NOT NULL AND assigned_by = 'user'
+           AND ignored = 0 AND model_gen = ?1
+         ORDER BY person_id, det_score DESC",
+    )?;
+    let rows: Vec<(i64, Vec<u8>)> = stmt
+        .query_map(params![gen], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    let mut out: Vec<facedet::PersonProtos> = Vec::new();
+    for (pid, blob) in rows {
+        let Some(emb) = facedet::blob_to_embedding(&blob) else {
+            continue;
+        };
+        match out.last_mut() {
+            Some(p) if p.person_id == pid => p.exemplars.push(emb),
+            _ => out.push(facedet::PersonProtos {
+                person_id: pid,
+                exemplars: vec![emb],
+            }),
+        }
+    }
+    for p in &mut out {
+        let picked = facedet::select_exemplars(&p.exemplars, max_exemplars);
+        p.exemplars = picked.iter().map(|&i| p.exemplars[i].clone()).collect();
+    }
+    Ok(out)
+}
+
+/// face_id → rejected person ids, for one photo (sweep + panel exclusions).
+pub fn photo_rejections(
+    conn: &Connection,
+    photo_id: &str,
+) -> rusqlite::Result<HashMap<i64, std::collections::HashSet<i64>>> {
+    let mut stmt = conn.prepare(
+        "SELECT r.face_id, r.person_id FROM face_person_rejections r
+         JOIN faces f ON f.id = r.face_id WHERE f.photo_id = ?1",
+    )?;
+    let mut map: HashMap<i64, std::collections::HashSet<i64>> = HashMap::new();
+    let rows = stmt.query_map(params![photo_id], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+    })?;
+    for row in rows {
+        let (fid, pid) = row?;
+        map.entry(fid).or_default().insert(pid);
+    }
+    Ok(map)
+}
+
+/// Photos that still have unassigned, unignored, current-gen faces — the
+/// post-naming sweep's work list.
+pub fn sweep_candidates(conn: &Connection, gen: i64) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT f.photo_id FROM faces f
+         JOIN face_scan s ON s.photo_id = f.photo_id
+         WHERE f.person_id IS NULL AND f.ignored = 0 AND f.model_gen = ?1
+           AND s.status = 'ok'",
+    )?;
+    let rows = stmt.query_map(params![gen], |r| r.get(0))?;
+    rows.collect()
+}
+
+/// Sweep one photo: snapshot → match lock-free → one short conditional
+/// commit. A user edit between snapshot and commit (face_revision bump)
+/// discards the whole photo's sweep — the human always wins. Auto
+/// assignments do NOT bump face_revision themselves: they are machine state,
+/// regenerable, and must never block the undo-naming toast.
+pub fn sweep_photo(
+    conn: &mut Connection,
+    photo_id: &str,
+    gen: i64,
+    protos: &[facedet::PersonProtos],
+    threshold: f32,
+    margin: f32,
+) -> rusqlite::Result<usize> {
+    let revision = face_revision(conn, photo_id)?;
+    let epoch = state_get(conn, "index_epoch")?;
+    let rejections = photo_rejections(conn, photo_id)?;
+    let faces: Vec<(i64, Vec<u8>)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, embedding FROM faces
+             WHERE photo_id = ?1 AND person_id IS NULL AND ignored = 0 AND model_gen = ?2",
+        )?;
+        let v: Vec<(i64, Vec<u8>)> = stmt
+            .query_map(params![photo_id, gen], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<_, _>>()?;
+        v
+    };
+    // Comparisons outside any lock.
+    let empty = std::collections::HashSet::new();
+    let matches: Vec<(i64, i64, f32)> = faces
+        .iter()
+        .filter_map(|(fid, blob)| {
+            let emb = facedet::blob_to_embedding(blob)?;
+            let rejected = rejections.get(fid).unwrap_or(&empty);
+            facedet::match_face(&emb, protos, rejected, threshold, margin)
+                .map(|(pid, score)| (*fid, pid, score))
+        })
+        .collect();
+    if matches.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if !index_enabled(&tx)?
+        || state_get(&tx, "index_epoch")? != epoch
+        || face_revision(&tx, photo_id)? != revision
+        || current_gen(&tx)?.map(|(g, ..)| g) != Some(gen)
+    {
+        return Ok(0); // tx drops → rollback; the sweep re-runs later
+    }
+    let mut applied = 0;
+    for (fid, pid, score) in &matches {
+        // Conditional per face too: only fill still-empty slots.
+        applied += tx.execute(
+            "UPDATE faces SET person_id = ?2, assigned_by = 'auto', similarity = ?3
+             WHERE id = ?1 AND person_id IS NULL AND ignored = 0",
+            params![fid, pid, *score as f64],
+        )?;
+    }
+    tx.commit()?;
+    Ok(applied)
+}
+
+/// Calibration report over the CURRENT naming state (plan Slice B): how well
+/// do user-confirmed identities separate on this library? Leave-one-out
+/// positives (each confirmed face scored against its person's OTHER faces),
+/// cross-person negatives, and the unassigned-face score field. Thresholds
+/// get chosen from the gap between the positive and negative distributions.
+pub fn calibration_data(conn: &Connection, gen: i64) -> rusqlite::Result<serde_json::Value> {
+    let mut stmt = conn.prepare(
+        "SELECT f.person_id, per.name, f.embedding FROM faces f
+         JOIN persons per ON per.id = f.person_id
+         WHERE f.assigned_by = 'user' AND f.ignored = 0 AND f.model_gen = ?1
+         ORDER BY f.person_id, f.det_score DESC",
+    )?;
+    let rows: Vec<(i64, String, Vec<u8>)> = stmt
+        .query_map(params![gen], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<Result<_, _>>()?;
+    let mut persons: Vec<(i64, String, Vec<Vec<f32>>)> = Vec::new();
+    for (pid, name, blob) in rows {
+        let Some(emb) = facedet::blob_to_embedding(&blob) else {
+            continue;
+        };
+        match persons.last_mut() {
+            Some((id, _, embs)) if *id == pid => embs.push(emb),
+            _ => persons.push((pid, name, vec![emb])),
+        }
+    }
+
+    let exemplars_of = |embs: &[Vec<f32>]| -> Vec<Vec<f32>> {
+        facedet::select_exemplars(embs, 5)
+            .iter()
+            .map(|&i| embs[i].clone())
+            .collect()
+    };
+    let score_vs = |emb: &[f32], exemplars: &[Vec<f32>]| -> f32 {
+        exemplars
+            .iter()
+            .map(|e| facedet::cosine(emb, e))
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
+
+    let mut positives: Vec<f32> = Vec::new();
+    let mut negatives: Vec<f32> = Vec::new();
+    let mut person_reports = Vec::new();
+    for (i, (pid, name, embs)) in persons.iter().enumerate() {
+        let mut loo: Vec<f32> = Vec::new();
+        if embs.len() >= 2 {
+            for k in 0..embs.len() {
+                let rest: Vec<Vec<f32>> = embs
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, _)| *j != k)
+                    .map(|(_, e)| e.clone())
+                    .collect();
+                loo.push(score_vs(&embs[k], &exemplars_of(&rest)));
+            }
+            positives.extend(&loo);
+        }
+        let mut neg: Vec<f32> = Vec::new();
+        for (j, (_, _, other)) in persons.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            let ex = exemplars_of(other);
+            for e in embs {
+                neg.push(score_vs(e, &ex));
+            }
+        }
+        negatives.extend(&neg);
+        person_reports.push(serde_json::json!({
+            "personId": pid,
+            "name": name,
+            "confirmedFaces": embs.len(),
+            "looPositives": loo,
+            "negativesMax": neg.iter().copied().fold(f32::NEG_INFINITY, f32::max),
+        }));
+    }
+
+    // Unassigned field: what would auto-assignment see right now?
+    let protos = person_prototypes(conn, gen, 5)?;
+    let mut stmt = conn.prepare(
+        "SELECT embedding FROM faces
+         WHERE person_id IS NULL AND ignored = 0 AND model_gen = ?1",
+    )?;
+    let blobs: Vec<Vec<u8>> = stmt
+        .query_map(params![gen], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
+    let mut unassigned: Vec<serde_json::Value> = Vec::new();
+    for blob in blobs.iter().take(2000) {
+        let Some(emb) = facedet::blob_to_embedding(blob) else {
+            continue;
+        };
+        let mut scores: Vec<(i64, f32)> = protos
+            .iter()
+            .map(|p| (p.person_id, score_vs(&emb, &p.exemplars)))
+            .collect();
+        scores.sort_by(|a, b| b.1.total_cmp(&a.1));
+        if let Some(&(pid, best)) = scores.first() {
+            let second = scores.get(1).map(|s| s.1).unwrap_or(f32::NEG_INFINITY);
+            unassigned.push(serde_json::json!({
+                "bestPerson": pid,
+                "best": best,
+                "margin": if second.is_finite() { best - second } else { best },
+            }));
+        }
+    }
+
+    let pct = |v: &mut Vec<f32>, p: f64| -> Option<f32> {
+        if v.is_empty() {
+            return None;
+        }
+        v.sort_by(f32::total_cmp);
+        let idx = ((p / 100.0) * (v.len() - 1) as f64).round() as usize;
+        Some(v[idx.min(v.len() - 1)])
+    };
+    let (mut pos, mut neg) = (positives.clone(), negatives.clone());
+    Ok(serde_json::json!({
+        "modelGen": gen,
+        "persons": person_reports,
+        "unassigned": unassigned,
+        "summary": {
+            "positives": positives.len(),
+            "posMin": pct(&mut pos, 0.0),
+            "posP5": pct(&mut pos, 5.0),
+            "posMedian": pct(&mut pos, 50.0),
+            "negatives": negatives.len(),
+            "negP95": pct(&mut neg, 95.0),
+            "negMax": pct(&mut neg, 100.0),
+        },
+    }))
 }
 
 /// Scan-time state of one photo, for the worker's job selection.
@@ -760,6 +1050,14 @@ impl Store {
                 params![fid, pid],
             )?;
         }
+        // Auto-assignments to this person exist only because of the naming
+        // being undone (embed-time matching / the post-naming sweep) — clear
+        // them regardless of revision: machine state, regenerable.
+        tx.execute(
+            "UPDATE faces SET person_id = NULL, assigned_by = NULL, similarity = NULL
+             WHERE person_id = ?1 AND assigned_by = 'auto'",
+            params![op.person_id],
+        )?;
         if op.person_created {
             tx.execute(
                 "DELETE FROM persons WHERE id = ?1
@@ -1169,6 +1467,7 @@ mod tests {
             "p1",
             &snap,
             &[nf(R1, &emb(1.0, 0.0)), nf(R2, &emb(0.0, 1.0))],
+            &[],
             1,
             1,
         )
@@ -1351,6 +1650,7 @@ mod tests {
                 nf(moved(R2), &emb(0.0, 1.0)),
                 nf([0.4, 0.6, 0.2, 0.2], &emb(-1.0, 0.0)),
             ],
+            &[],
             2,
             2,
         )
@@ -1392,7 +1692,16 @@ mod tests {
         );
         // Same spot, wildly different embedding (new space) → still carried,
         // because correspondence is geometric.
-        let out = commit_scan(&mut worker, "p1", &snap, &[nf(R1, &emb(-1.0, -1.0))], 3, 3).unwrap();
+        let out = commit_scan(
+            &mut worker,
+            "p1",
+            &snap,
+            &[nf(R1, &emb(-1.0, -1.0))],
+            &[],
+            3,
+            3,
+        )
+        .unwrap();
         assert_eq!(out, CommitOutcome::Committed);
         let faces = store.faces_for_photo("p1").unwrap().unwrap();
         assert_eq!(faces[0].person_id, Some(nati.person.id));
@@ -1435,7 +1744,16 @@ mod tests {
         // Guard 1: user edit bumped face_revision mid-flight.
         let snap = snapshot(&worker, "p1", gen).unwrap();
         store.face_set_name(&ids[..1], "Nati").unwrap();
-        let out = commit_scan(&mut worker, "p1", &snap, &[nf(R1, &emb(1.0, 0.0))], 9, 9).unwrap();
+        let out = commit_scan(
+            &mut worker,
+            "p1",
+            &snap,
+            &[nf(R1, &emb(1.0, 0.0))],
+            &[],
+            9,
+            9,
+        )
+        .unwrap();
         assert_eq!(out, CommitOutcome::Discarded, "user correction wins");
         assert_eq!(
             store.faces_for_photo("p1").unwrap().unwrap().len(),
@@ -1447,20 +1765,47 @@ mod tests {
         let snap = snapshot(&worker, "p1", gen).unwrap();
         store.set_faces_enabled(false).unwrap();
         store.set_faces_enabled(true).unwrap();
-        let out = commit_scan(&mut worker, "p1", &snap, &[nf(R1, &emb(1.0, 0.0))], 9, 9).unwrap();
+        let out = commit_scan(
+            &mut worker,
+            "p1",
+            &snap,
+            &[nf(R1, &emb(1.0, 0.0))],
+            &[],
+            9,
+            9,
+        )
+        .unwrap();
         assert_eq!(out, CommitOutcome::Discarded, "epoch change kills commits");
 
         // Guard 3: disabled at commit time.
         let snap = snapshot(&worker, "p1", gen).unwrap();
         store.set_faces_enabled(false).unwrap();
-        let out = commit_scan(&mut worker, "p1", &snap, &[nf(R1, &emb(1.0, 0.0))], 9, 9).unwrap();
+        let out = commit_scan(
+            &mut worker,
+            "p1",
+            &snap,
+            &[nf(R1, &emb(1.0, 0.0))],
+            &[],
+            9,
+            9,
+        )
+        .unwrap();
         assert_eq!(out, CommitOutcome::Discarded, "disabled parks all writes");
         store.set_faces_enabled(true).unwrap();
 
         // Guard 4: model generation superseded.
         let snap = snapshot(&worker, "p1", gen).unwrap();
         ensure_gen(&mut worker, "d3", "r3", 1).unwrap();
-        let out = commit_scan(&mut worker, "p1", &snap, &[nf(R1, &emb(1.0, 0.0))], 9, 9).unwrap();
+        let out = commit_scan(
+            &mut worker,
+            "p1",
+            &snap,
+            &[nf(R1, &emb(1.0, 0.0))],
+            &[],
+            9,
+            9,
+        )
+        .unwrap();
         assert_eq!(out, CommitOutcome::Discarded, "stale gen never lands");
     }
 
@@ -1473,7 +1818,16 @@ mod tests {
         // Worker snapshotted BEFORE the delete → its commit must die.
         let snap = snapshot(&worker, "p2", gen).unwrap();
         store.delete_face_data().unwrap();
-        let out = commit_scan(&mut worker, "p2", &snap, &[nf(R1, &emb(1.0, 0.0))], 9, 9).unwrap();
+        let out = commit_scan(
+            &mut worker,
+            "p2",
+            &snap,
+            &[nf(R1, &emb(1.0, 0.0))],
+            &[],
+            9,
+            9,
+        )
+        .unwrap();
         assert_eq!(out, CommitOutcome::Discarded);
 
         // Everything face-derived is gone; control rows survive.
@@ -1515,7 +1869,7 @@ mod tests {
             ("p3", vec![nf(R1, &emb(-1.0, 0.3))]),
         ] {
             let snap = snapshot(&worker, photo, gen).unwrap();
-            commit_scan(&mut worker, photo, &snap, &faces, 1, 1).unwrap();
+            commit_scan(&mut worker, photo, &snap, &faces, &[], 1, 1).unwrap();
         }
         let clusters = store.face_clusters(folder_id, 0.9).unwrap();
         assert_eq!(clusters.len(), 1, "only the recurring face clusters");
@@ -1545,6 +1899,149 @@ mod tests {
         let map = store.person_map(folder_id).unwrap();
         assert!(map.contains_key("p1"));
         assert!(!map.contains_key("p2"), "trashed photo not in person_map");
+    }
+
+    // ---------- Slice B: auto-recognition ----------
+
+    /// Seed p1 with two named faces (Nati at e(1,0), Dani at e(0,1)) and
+    /// p2/p3 with unassigned faces; returns (gen, nati_id, dani_id).
+    fn seed_recognition(store: &Store, worker: &mut Connection) -> (i64, i64, i64) {
+        let (gen, ids) = seed_faces(worker);
+        let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
+        let (dani, _) = store.face_set_name(&ids[1..], "Dani").unwrap();
+        // p2: a face nearly identical to Nati; p3: an ambiguous face.
+        for (photo, e) in [("p2", emb(0.98, 0.05)), ("p3", emb(1.0, 1.0))] {
+            let snap = snapshot(worker, photo, gen).unwrap();
+            commit_scan(worker, photo, &snap, &[nf(R1, &e)], &[], 1, 1).unwrap();
+        }
+        (gen, nati.person.id, dani.person.id)
+    }
+
+    #[test]
+    fn sweep_assigns_confident_skips_ambiguous_and_rejected() {
+        let (store, mut worker, _, _) = setup();
+        let (gen, nati, _) = seed_recognition(&store, &mut worker);
+        let protos = person_prototypes(&worker, gen, 5).unwrap();
+        assert_eq!(protos.len(), 2);
+
+        // p2 (clear Nati lookalike) assigns; p3 (equidistant) must not.
+        let n = sweep_photo(&mut worker, "p2", gen, &protos, 0.40, 0.05).unwrap();
+        assert_eq!(n, 1);
+        let f = &store.faces_for_photo("p2").unwrap().unwrap()[0];
+        assert_eq!(f.person_id, Some(nati));
+        assert_eq!(f.assigned_by.as_deref(), Some("auto"));
+        let n = sweep_photo(&mut worker, "p3", gen, &protos, 0.40, 0.05).unwrap();
+        assert_eq!(n, 0, "ambiguous face stays for the human");
+
+        // "not Nati" on p2's face, then re-sweep: rejection is absolute.
+        let fid = f.face_id;
+        store.face_reject(fid, nati).unwrap();
+        let n = sweep_photo(&mut worker, "p2", gen, &protos, 0.40, 0.05).unwrap();
+        assert_eq!(n, 0, "\"not X\" survives the sweep, forever");
+        let f = &store.faces_for_photo("p2").unwrap().unwrap()[0];
+        assert_eq!(f.person_id, None);
+
+        // Disabled indexing parks the sweep too.
+        store.set_faces_enabled(false).unwrap();
+        let n = sweep_photo(&mut worker, "p3", gen, &protos, 0.0, 0.0).unwrap();
+        assert_eq!(n, 0, "sweep writes nothing while disabled");
+    }
+
+    #[test]
+    fn auto_assignments_never_train_prototypes() {
+        let (store, mut worker, _, _) = setup();
+        let (gen, nati, _) = seed_recognition(&store, &mut worker);
+        let before: usize = person_prototypes(&worker, gen, 5)
+            .unwrap()
+            .iter()
+            .find(|p| p.person_id == nati)
+            .unwrap()
+            .exemplars
+            .len();
+        let protos = person_prototypes(&worker, gen, 5).unwrap();
+        sweep_photo(&mut worker, "p2", gen, &protos, 0.40, 0.05).unwrap();
+        let after: usize = person_prototypes(&worker, gen, 5)
+            .unwrap()
+            .iter()
+            .find(|p| p.person_id == nati)
+            .unwrap()
+            .exemplars
+            .len();
+        assert_eq!(
+            before, after,
+            "an auto face must never move anyone's anchor — no cascade"
+        );
+    }
+
+    #[test]
+    fn embed_time_proposals_fill_only_uncarried_faces() {
+        let (store, mut worker, _, _) = setup();
+        let (gen, ids) = seed_faces(&mut worker);
+        let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
+        store.mark_face_stale("p1").unwrap();
+
+        // Rescan: face 1 carries Nati (user); face 2 carries nothing and has
+        // a proposal; a brand-new face 3 has a proposal too.
+        let snap = snapshot(&worker, "p1", gen).unwrap();
+        let out = commit_scan(
+            &mut worker,
+            "p1",
+            &snap,
+            &[
+                nf(R1, &emb(1.0, 0.0)),
+                nf(R2, &emb(0.0, 1.0)),
+                nf([0.4, 0.6, 0.2, 0.2], &emb(0.9, 0.1)),
+            ],
+            &[
+                Some((nati.person.id, 0.99)), // must be IGNORED (carried user state wins)
+                None,
+                Some((nati.person.id, 0.61)),
+            ],
+            2,
+            2,
+        )
+        .unwrap();
+        assert_eq!(out, CommitOutcome::Committed);
+        let faces = store.faces_for_photo("p1").unwrap().unwrap();
+        assert_eq!(faces[0].assigned_by.as_deref(), Some("user"), "carried");
+        assert_eq!(faces[1].person_id, None);
+        assert_eq!(faces[2].person_id, Some(nati.person.id));
+        assert_eq!(faces[2].assigned_by.as_deref(), Some("auto"));
+    }
+
+    #[test]
+    fn undo_naming_clears_the_sweeps_auto_assignments() {
+        let (store, mut worker, folder_id, _) = setup();
+        let (gen, ids) = seed_faces(&mut worker);
+        // p2 gets an unassigned Nati-lookalike BEFORE naming.
+        let snap = snapshot(&worker, "p2", gen).unwrap();
+        commit_scan(
+            &mut worker,
+            "p2",
+            &snap,
+            &[nf(R1, &emb(0.98, 0.05))],
+            &[],
+            1,
+            1,
+        )
+        .unwrap();
+
+        let (_, op) = store.face_set_name(&ids[..1], "Nati").unwrap();
+        // The post-naming sweep auto-assigns p2's face.
+        let protos = person_prototypes(&worker, gen, 5).unwrap();
+        sweep_photo(&mut worker, "p2", gen, &protos, 0.40, 0.05).unwrap();
+        assert!(store.faces_for_photo("p2").unwrap().unwrap()[0]
+            .person_id
+            .is_some());
+
+        // Undo the naming: the confirmed face reverts AND every auto
+        // assignment that existed only because of it is cleared; the
+        // newly-created person leaves with them.
+        assert_eq!(store.undo_naming(&op).unwrap(), 1);
+        assert!(store.faces_for_photo("p2").unwrap().unwrap()[0]
+            .person_id
+            .is_none());
+        assert!(store.list_persons(folder_id).unwrap().is_empty());
     }
 
     #[test]
