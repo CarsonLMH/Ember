@@ -658,6 +658,7 @@ export default function App() {
       {showPeople && state.folderId !== null && (
         <PeoplePanel
           folderId={state.folderId}
+          trashedCount={state.trashedCount}
           onClose={() => setShowPeople(false)}
           notify={(m) => session.notify(m)}
         />

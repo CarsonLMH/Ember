@@ -38,10 +38,15 @@ function FaceChip({ photoId, faceIndex, size = 44 }: { photoId: string; faceInde
       loading="lazy"
       alt=""
       onError={() => {
-        if (attempt < 8) {
-          setTimeout(() => {
-            if (alive.current) setAttempt((a) => a + 1);
-          }, 800);
+        // Each miss enqueues a repair; on a wiped cache the preview must
+        // regenerate first, so the tail retries stretch out (~30s total).
+        if (attempt < 15) {
+          setTimeout(
+            () => {
+              if (alive.current) setAttempt((a) => a + 1);
+            },
+            attempt < 5 ? 800 : 2500,
+          );
         }
       }}
     />
@@ -55,10 +60,13 @@ interface UndoToast {
 
 export default function PeoplePanel({
   folderId,
+  trashedCount,
   onClose,
   notify,
 }: {
   folderId: number;
+  /** Trash/restore/undo change folder-scoped counts — reload when it moves. */
+  trashedCount: number;
   onClose: () => void;
   notify: (msg: string) => void;
 }) {
@@ -83,7 +91,9 @@ export default function PeoplePanel({
     void faceClusters(folderId).then(setClusters).catch(() => {});
   }, [folderId]);
 
-  useEffect(load, [load]);
+  // Reload on open AND whenever trash state moves (trashing a photo of a
+  // named person must drop their count while the panel is open).
+  useEffect(load, [load, trashedCount]);
 
   // Live refresh while the worker scans — debounced against event bursts.
   useEffect(() => {
