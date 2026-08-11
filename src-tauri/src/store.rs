@@ -812,7 +812,7 @@ impl Store {
     /// Remove a completed job — but only if the rating hasn't changed since it
     /// was taken (a newer keypress re-queues with a different value).
     ///
-    /// KNOWN FOLLOW-UP (predates faces, reported in review_round4.md §6): the
+    /// KNOWN FOLLOW-UP (predates faces, reported in docs/reviews/faces/REVIEW_ROUND4.md §6): the
     /// compare-and-delete token is (photo_id, rating) only, so a tags-only
     /// re-edit at the same rating can be deleted by the older job's
     /// completion and its file write lost. The fix is a per-job monotonic
