@@ -1095,20 +1095,6 @@ fn clear_auto_assignments(
     Ok(n)
 }
 
-/// UI-only declutter: hidden people leave the panel list and the `Shift+p`
-/// switcher but keep their labels and stay recognized.
-#[tauri::command]
-fn set_person_hidden(
-    state: tauri::State<'_, AppState>,
-    person_id: i64,
-    hidden: bool,
-) -> Result<(), String> {
-    state
-        .store
-        .set_person_hidden(person_id, hidden)
-        .map_err(|e| e.to_string())
-}
-
 #[tauri::command]
 fn delete_person(state: tauri::State<'_, AppState>, person_id: i64) -> Result<usize, String> {
     state
@@ -1312,7 +1298,6 @@ pub fn run() {
             set_faces_enabled,
             rescan_faces,
             delete_person,
-            set_person_hidden,
             clear_auto_assignments,
             quit_app,
             frontend_log

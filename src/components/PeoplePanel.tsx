@@ -15,7 +15,6 @@ import {
   renamePerson,
   rescanFaces,
   setFacesEnabled,
-  setPersonHidden,
   setFacesIgnored,
   undoNaming,
   type ChipRef,
@@ -108,7 +107,6 @@ export default function PeoplePanel({
   const [persons, setPersons] = useState<PersonOut[] | null>(null);
   const [clusters, setClusters] = useState<FaceClusters | null>(null);
   const [showLoose, setShowLoose] = useState(false);
-  const [showHidden, setShowHidden] = useState(false);
   /** Selection in the loose grid — naming/dismissing works on this set. */
   const [looseSelected, setLooseSelected] = useState<Set<number>>(new Set());
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -327,16 +325,6 @@ export default function PeoplePanel({
     reload();
   };
 
-  const setHidden = async (person: PersonOut, hidden: boolean) => {
-    try {
-      await setPersonHidden(person.id, hidden);
-    } catch (e) {
-      notify(String(e));
-    }
-    setExpanded(null);
-    reload();
-  };
-
   const rescan = async () => {
     try {
       const n = await rescanFaces(folderId);
@@ -421,12 +409,12 @@ export default function PeoplePanel({
             </div>
           )}
 
-          {persons && persons.filter((p) => p.folderCount > 0 && !p.hidden).length > 0 && (
+          {persons && persons.filter((p) => p.folderCount > 0).length > 0 && (
             <div className="people-section">Named</div>
           )}
           <ul>
             {persons
-              ?.filter((p) => p.folderCount > 0 && !p.hidden)
+              ?.filter((p) => p.folderCount > 0)
               .map((p) => (
                 <li key={p.id} className="people-person">
                   <button
@@ -479,53 +467,12 @@ export default function PeoplePanel({
                           </span>
                         ))}
                       </div>
-                      <div className="people-cluster-row">
-                        <span className="people-hint">
-                          double-click the name to rename
-                        </span>
-                        <button
-                          className="people-dim"
-                          title="Keep the labels and the recognition, just stop listing this person here and in Shift+p"
-                          onClick={() => void setHidden(p, true)}
-                        >
-                          hide from lists
-                        </button>
-                      </div>
+                      <div className="people-hint">double-click the name to rename</div>
                     </>
                   )}
                 </li>
               ))}
           </ul>
-
-          {/* Hidden people stay reachable — hiding is declutter, not delete. */}
-          {persons && persons.filter((p) => p.hidden && p.folderCount > 0).length > 0 && (
-            <div className="people-hidden">
-              <button className="people-dim" onClick={() => setShowHidden((v) => !v)}>
-                {showHidden ? 'hide' : 'show'}{' '}
-                {persons.filter((p) => p.hidden && p.folderCount > 0).length} hidden
-              </button>
-              {showHidden && (
-                <ul>
-                  {persons
-                    .filter((p) => p.hidden && p.folderCount > 0)
-                    .map((p) => (
-                      <li key={p.id} className="people-person">
-                        <div className="people-row">
-                          {p.repPhotoId !== null && p.repFaceIndex !== null && (
-                            <FaceChip photoId={p.repPhotoId} faceIndex={p.repFaceIndex} />
-                          )}
-                          <span className="people-name">{p.name}</span>
-                          <span className="people-count">{p.folderCount}</span>
-                          <button className="people-dim" onClick={() => void setHidden(p, false)}>
-                            unhide
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                </ul>
-              )}
-            </div>
-          )}
 
           {clusters && clusters.clusters.length > 0 && (
             <div className="people-section">Unnamed</div>

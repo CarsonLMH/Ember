@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS persons (
     name TEXT NOT NULL,
     name_norm TEXT NOT NULL UNIQUE,
     created_at INTEGER NOT NULL,
+    -- Vestigial: the hide-a-person feature was removed as unused (2026-08).
+    -- The column stays because dropping it would need a migration for zero
+    -- benefit; nothing reads or writes it.
     hidden INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS face_model_gens (
     gen INTEGER PRIMARY KEY,
@@ -729,7 +732,6 @@ pub fn scan_row(conn: &Connection, photo_id: &str) -> rusqlite::Result<Option<Sc
 pub struct PersonOut {
     pub id: i64,
     pub name: String,
-    pub hidden: bool,
     /// Faces of this person in the queried folder (trashed excluded).
     pub folder_count: i64,
     /// Global representative face for the chip (photoId, faceIndex).
@@ -1437,19 +1439,6 @@ impl Store {
         Ok(cleared)
     }
 
-    /// Hide a person from the People list and the filter switcher. UI-only:
-    /// their faces keep their labels, badges still name them, and matching
-    /// still recognizes them — this is "stop cluttering my lists", not
-    /// "forget who this is" (that's delete_person).
-    pub fn set_person_hidden(&self, person_id: i64, hidden: bool) -> rusqlite::Result<()> {
-        let conn = self.lock_conn();
-        conn.execute(
-            "UPDATE persons SET hidden = ?2 WHERE id = ?1",
-            params![person_id, hidden],
-        )?;
-        Ok(())
-    }
-
     /// Remove a person entirely: their faces return to Unnamed and every
     /// rejection naming them is dropped. Used by the gate harness for
     /// guaranteed teardown (undo alone can't promise it — undo deliberately
@@ -1543,10 +1532,10 @@ pub(crate) fn person_row(
     person_id: i64,
     folder_id: Option<i64>,
 ) -> rusqlite::Result<PersonOut> {
-    let (name, hidden): (String, bool) = conn.query_row(
-        "SELECT name, hidden FROM persons WHERE id = ?1",
+    let name: String = conn.query_row(
+        "SELECT name FROM persons WHERE id = ?1",
         params![person_id],
-        |r| Ok((r.get(0)?, r.get::<_, i64>(1)? != 0)),
+        |r| r.get(0),
     )?;
     let folder_count = match folder_id {
         Some(fid) => conn.query_row(
@@ -1573,7 +1562,6 @@ pub(crate) fn person_row(
     Ok(PersonOut {
         id: person_id,
         name,
-        hidden,
         folder_count,
         rep_photo_id: rep.as_ref().map(|(p, _)| p.clone()),
         rep_face_index: rep.map(|(_, i)| i),
@@ -2291,47 +2279,6 @@ mod tests {
             .unwrap();
         assert!(!f.ignored);
         assert_eq!(f.person_id, None);
-    }
-
-    #[test]
-    fn hiding_a_person_is_ui_only() {
-        let (store, mut worker, folder_id, _) = setup();
-        let (gen, ids) = seed_faces(&mut worker);
-        let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
-        store.set_person_hidden(nati.person.id, true).unwrap();
-
-        let p = store
-            .list_persons(folder_id)
-            .unwrap()
-            .into_iter()
-            .find(|p| p.id == nati.person.id)
-            .unwrap();
-        assert!(p.hidden, "listed as hidden so the panel can group them");
-        assert_eq!(p.folder_count, 1, "faces are untouched");
-        // Still labelled on the photo and still a matching prototype: hiding
-        // is decluttering, not forgetting.
-        assert_eq!(
-            store.faces_for_photo("p1").unwrap().unwrap()[0]
-                .person_name
-                .as_deref(),
-            Some("Nati")
-        );
-        assert!(person_prototypes(&worker, gen, 5)
-            .unwrap()
-            .iter()
-            .any(|pr| pr.person_id == nati.person.id));
-        assert!(store.person_map(folder_id).unwrap().contains_key("p1"));
-
-        store.set_person_hidden(nati.person.id, false).unwrap();
-        assert!(
-            !store
-                .list_persons(folder_id)
-                .unwrap()
-                .into_iter()
-                .find(|p| p.id == nati.person.id)
-                .unwrap()
-                .hidden
-        );
     }
 
     #[test]

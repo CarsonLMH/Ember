@@ -591,15 +591,10 @@ kbd {
   gap: 8px;
 }
 
-.people-loose,
-.people-hidden {
+.people-loose {
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid #2a2a2a;
-}
-
-.people-hidden .people-name {
-  color: #999;
 }
 
 /* Face badges over the photo (SPEC §14). The layer is inert so pan/pinch

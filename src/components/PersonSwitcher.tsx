@@ -14,7 +14,7 @@ export default function PersonSwitcher({ onClose }: { onClose: () => void }) {
   const options: Option[] = [
     { label: 'all photos', value: null },
     ...s.persons
-      .filter((p) => p.folderCount > 0 && !p.hidden)
+      .filter((p) => p.folderCount > 0)
       .map((p) => ({ label: `${p.name} (${p.folderCount})`, value: p.id })),
   ];
   const [sel, setSel] = useState(() => {

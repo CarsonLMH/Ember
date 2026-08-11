@@ -188,7 +188,6 @@ export function facesSpikeStats(): Promise<FacesSpikeStats> {
 export interface PersonOut {
   id: number;
   name: string;
-  hidden: boolean;
   folderCount: number;
   repPhotoId: string | null;
   repFaceIndex: number | null;
@@ -341,12 +340,6 @@ export function deletePerson(personId: number): Promise<number> {
 /** Drop every machine guess in the folder; user labels and "not X" survive. */
 export function clearAutoAssignments(folderId: number): Promise<number> {
   return invoke<number>('clear_auto_assignments', { folderId });
-}
-
-/** Declutter only: hidden people leave the list and the switcher, but keep
- * their labels and stay recognized. */
-export function setPersonHidden(personId: number, hidden: boolean): Promise<void> {
-  return invoke('set_person_hidden', { personId, hidden });
 }
 
 export function onFacesProgress(cb: (p: FacesProgress) => void): Promise<UnlistenFn> {

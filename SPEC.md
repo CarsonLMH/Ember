@@ -108,7 +108,7 @@ filter the folder to a person.
   epoch/enabled/generation/revision checks — a user correction always beats
   an in-flight scan, in any process.
 - **UX**: People panel (`p`, trash-panel style) — named people with counts,
-  rename, merge-on-rename-collision, hide-from-lists; unnamed recurring
+  rename, merge-on-rename-collision; unnamed recurring
   clusters with one-line naming, per-face exclude, and "not a person / don't
   label" for statues and photographed photos; faces seen only once are
   collapsed and rescue-only (unlabeled is their resting state); undo toasts;

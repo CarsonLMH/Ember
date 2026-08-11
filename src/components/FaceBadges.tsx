@@ -170,12 +170,9 @@ export default function FaceBadges({ faces }: { faces: FaceOut[] }) {
                   />
                   {/* Existing names autocomplete; a new one creates a person. */}
                   <datalist id="face-menu-names">
-                    {session
-                      .getState()
-                      .persons.filter((p) => !p.hidden)
-                      .map((p) => (
-                        <option key={p.id} value={p.name} />
-                      ))}
+                    {session.getState().persons.map((p) => (
+                      <option key={p.id} value={p.name} />
+                    ))}
                   </datalist>
                 </>
               ) : (
