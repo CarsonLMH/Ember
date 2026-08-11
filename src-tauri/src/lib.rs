@@ -1,5 +1,9 @@
 mod exposure;
+mod facedet;
+mod faces;
+mod facestore;
 mod fastexif;
+mod janitor;
 mod keymap;
 mod metadata;
 mod preview;
@@ -26,6 +30,17 @@ pub struct AppState {
     exiftool: Arc<xmp::Exiftool>,
     recipes: recipes::RecipeStore,
     proto_tx: crossbeam_channel::Sender<protocol::Job>,
+    faces_cfg: settings::FacesCfg,
+    /// settings.toml lives here; app-driven faces-enabled writes mirror to it.
+    config_dir: PathBuf,
+    /// Session-scoped undo-naming registry (toast-lifetime, not history).
+    naming_ops: std::sync::Mutex<HashMap<u64, facestore::NamingOp>>,
+    naming_seq: std::sync::atomic::AtomicU64,
+    /// The folder this session has open (-1 = none). The cache janitor needs
+    /// the folder ITSELF, not the photos currently listed: an open folder
+    /// whose photos are all trashed has no live ids, and its previews are the
+    /// only copy the Trash panel can show.
+    active_folder: Arc<std::sync::atomic::AtomicI64>,
 }
 
 #[derive(Serialize)]
@@ -65,6 +80,9 @@ fn scan_folder(
     // through a symlink; the user-supplied string stays the folders-table key.
     let root = std::fs::canonicalize(&root).unwrap_or(root);
     let folder = state.store.open_folder(&dir).map_err(|e| e.to_string())?;
+    state
+        .active_folder
+        .store(folder.folder_id, std::sync::atomic::Ordering::Relaxed);
     let entries = scanner::scan(&root);
     // Must run before sync_photos so `existing` sees cleared trash flags.
     reconcile_external_restores(&state.store, folder.folder_id, &entries);
@@ -83,6 +101,15 @@ fn scan_folder(
                     let _ = std::fs::remove_file(f);
                 }
                 let _ = state.store.clear_preview(&e.id);
+                // Anything still being computed from the preview we just
+                // deleted (face inference, chips) is now about pixels that no
+                // longer exist — bump the generation so it discards early.
+                state.preview.invalidate_preview(&e.id);
+                // Faces: keep the rows (carry-over source for assignments and
+                // rejections), just mark stale + drop the baked chips.
+                if state.store.mark_face_stale(&e.id).is_ok() {
+                    state.preview.delete_face_chips(&e.id);
+                }
             }
             _ => {
                 // No validity row → any leftover files are untrusted.
@@ -96,6 +123,9 @@ fn scan_folder(
                     ] {
                         let _ = std::fs::remove_file(f);
                     }
+                    // Same reasoning as the branch above: a preview we just
+                    // removed can still have inference running against it.
+                    state.preview.invalidate_preview(&e.id);
                 }
             }
         }
@@ -832,7 +862,353 @@ fn dev_flags() -> serde_json::Value {
         "verify": flag("EMBER_VERIFY"),
         "resumeTest": flag("EMBER_RESUME_TEST"),
         "zoomTest": flag("EMBER_ZOOMTEST"),
+        "facesForce": faces::force_enabled(),
+        "peopleTest": flag("EMBER_PEOPLETEST"),
     })
+}
+
+/// Worker counters — the storm harness verifies inference was genuinely
+/// active during the measured window (review-1 gate-integrity).
+#[tauri::command]
+fn faces_spike_stats() -> serde_json::Value {
+    faces::spike_stats()
+}
+
+// ---------- faces (SPEC §14) ----------
+
+#[tauri::command]
+fn face_clusters(
+    state: tauri::State<'_, AppState>,
+    folder_id: i64,
+) -> Result<facestore::ClustersOut, String> {
+    state
+        .store
+        .face_clusters(folder_id, state.faces_cfg.cluster_threshold)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn face_set_name(
+    state: tauri::State<'_, AppState>,
+    face_ids: Vec<i64>,
+    name: String,
+) -> Result<serde_json::Value, String> {
+    let (result, op) = state
+        .store
+        .face_set_name(&face_ids, &name)
+        .map_err(|e| e.to_string())?;
+    let op_id = state
+        .naming_seq
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut ops = state.naming_ops.lock().unwrap();
+    ops.insert(op_id, op);
+    // Toast-lifetime registry: keep only the most recent few ops.
+    while ops.len() > 8 {
+        let oldest = *ops.keys().min().unwrap();
+        ops.remove(&oldest);
+    }
+    // Slice B: freshly-confirmed faces are new prototypes — sweep the rest.
+    faces::request_sweep();
+    Ok(serde_json::json!({
+        "person": result.person,
+        "affectedFaceIds": result.affected_face_ids,
+        "opId": op_id,
+    }))
+}
+
+/// Score-distribution report for threshold calibration (plan Slice B) —
+/// written next to the perf reports; the summary comes back for the notice.
+#[tauri::command]
+fn face_calibration_report(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let report = {
+        let conn = state.store.lock_conn();
+        let Some((gen, ..)) = facestore::current_gen(&conn).map_err(|e| e.to_string())? else {
+            return Err("no photos indexed yet".into());
+        };
+        facestore::calibration_data(&conn, gen).map_err(|e| e.to_string())?
+    };
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("perf-reports");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let path = dir.join(format!("faces-calibration-{ts}.json"));
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "path": path.to_string_lossy(),
+        "summary": report["summary"],
+    }))
+}
+
+#[tauri::command]
+fn undo_naming(state: tauri::State<'_, AppState>, op_id: u64) -> Result<usize, String> {
+    let op = state
+        .naming_ops
+        .lock()
+        .unwrap()
+        .remove(&op_id)
+        .ok_or("naming action no longer undoable")?;
+    state.store.undo_naming(&op).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn face_assign(
+    state: tauri::State<'_, AppState>,
+    face_id: i64,
+    person_id: Option<i64>,
+) -> Result<(), String> {
+    state
+        .store
+        .face_assign(face_id, person_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn face_reject(
+    state: tauri::State<'_, AppState>,
+    face_id: i64,
+    person_id: i64,
+) -> Result<(), String> {
+    state
+        .store
+        .face_reject(face_id, person_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn rename_person(
+    state: tauri::State<'_, AppState>,
+    person_id: i64,
+    name: String,
+) -> Result<facestore::RenameOutcome, String> {
+    state.store.rename_person(person_id, &name)
+}
+
+/// "Not a person / don't label" — statues, archival prints, strangers.
+/// Pulled forward from Slice D on museum-folder feedback.
+#[tauri::command]
+fn set_faces_ignored(
+    state: tauri::State<'_, AppState>,
+    face_ids: Vec<i64>,
+    ignored: bool,
+) -> Result<usize, String> {
+    state
+        .store
+        .set_faces_ignored(&face_ids, ignored)
+        .map_err(|e| e.to_string())
+}
+
+/// Explicit user act, offered by the UI when a rename collides ("Nai" was a
+/// typo for "Nati"). Pulled forward from Slice D on first-acceptance feedback.
+#[tauri::command]
+fn merge_persons(
+    state: tauri::State<'_, AppState>,
+    source_id: i64,
+    target_id: i64,
+) -> Result<usize, String> {
+    if source_id == target_id {
+        return Err("a person cannot be merged into themselves".into());
+    }
+    state
+        .store
+        .merge_persons(source_id, target_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_persons(
+    state: tauri::State<'_, AppState>,
+    folder_id: i64,
+) -> Result<Vec<facestore::PersonOut>, String> {
+    state
+        .store
+        .list_persons(folder_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn person_faces(
+    state: tauri::State<'_, AppState>,
+    person_id: i64,
+    folder_id: i64,
+) -> Result<Vec<facestore::ChipRef>, String> {
+    state
+        .store
+        .person_faces(person_id, folder_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn person_map(
+    state: tauri::State<'_, AppState>,
+    folder_id: i64,
+) -> Result<HashMap<String, Vec<i64>>, String> {
+    state.store.person_map(folder_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn faces_for_photo(
+    state: tauri::State<'_, AppState>,
+    photo_id: String,
+) -> Result<Option<Vec<facestore::FaceOut>>, String> {
+    state
+        .store
+        .faces_for_photo(&photo_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn face_scan_status(
+    state: tauri::State<'_, AppState>,
+    folder_id: i64,
+) -> Result<serde_json::Value, String> {
+    let s = state
+        .store
+        .face_scan_status(folder_id, &faces::exhausted_errors())
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "enabled": s.enabled,
+        "total": s.total,
+        "scanned": s.scanned,
+        // Terminal failures only; an error the worker will still retry is
+        // `retrying` and stays inside `pending`, so the panel neither
+        // declares a photo failed mid-schedule nor finishes early.
+        "errors": s.errors,
+        "retrying": s.retrying,
+        // What the panel's "Scanning…" keys off: a photo parked in a terminal
+        // error is finished, not pending, so an exhausted failure no longer
+        // reads as an indexing run that never ends.
+        "pending": s.pending,
+        "engineError": faces::engine_error(),
+    }))
+}
+
+/// Privacy delete: wipes all face data AND durably disables indexing (in
+/// both processes — the DB is the authority). No automatic reindex follows.
+///
+/// Fails closed at every step. The DB wipe and the settings.toml write happen
+/// inside one SQLite writer-lock critical section (§Store::delete_face_data),
+/// so no concurrent toggle in the other process can leave the file saying
+/// `enabled = true` behind a disabled DB; if the file write fails, the DB
+/// stays authoritative at the next launch. Chip cleanup runs after the commit,
+/// when no publish can create a file any more — and if it cannot finish, this
+/// command reports the failure instead of claiming a successful deletion, with
+/// the DB's `chip_sweep_pending` flag keeping the retry owed.
+#[tauri::command]
+fn delete_face_data(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let config_dir = state.config_dir.clone();
+    let outcome = state
+        .store
+        .delete_face_data(&|enabled| settings::write_faces_enabled(&config_dir, enabled))
+        .map_err(|e| e.to_string())?;
+    state.naming_ops.lock().unwrap().clear();
+    let swept = faces::purge_chips(&state.preview);
+    if swept.is_ok() {
+        let _ = state.store.clear_chip_sweep_pending();
+    }
+    match (swept, outcome.mirror_error) {
+        (Ok(_), None) => Ok(()),
+        (Err(e), _) => Err(format!(
+            "Face data was deleted from the database and indexing is off, but some face image \
+             files could not be removed ({e}). They will be removed at the next launch — or \
+             delete ~/Library/Caches/com.cleung.ember yourself now."
+        )),
+        (Ok(_), Some(e)) => Err(format!(
+            "Face data was deleted and indexing is off, but settings.toml could not be updated \
+             ({e}). Indexing stays off — the app rewrites the file at the next launch."
+        )),
+    }
+}
+
+/// Throw away recognition's guesses in this folder, keeping every label the
+/// user made. The sweep re-derives them under current settings.
+#[tauri::command]
+fn clear_auto_assignments(
+    state: tauri::State<'_, AppState>,
+    folder_id: i64,
+) -> Result<usize, String> {
+    let n = state
+        .store
+        .clear_auto_assignments(folder_id)
+        .map_err(|e| e.to_string())?;
+    faces::request_sweep();
+    Ok(n)
+}
+
+#[tauri::command]
+fn delete_person(state: tauri::State<'_, AppState>, person_id: i64) -> Result<usize, String> {
+    state
+        .store
+        .delete_person(person_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Re-detect every photo in the folder (after a detection-setting change, or
+/// when a face was visibly missed). Names survive via the carry-over path.
+#[tauri::command]
+fn rescan_faces(state: tauri::State<'_, AppState>, folder_id: i64) -> Result<usize, String> {
+    let rows = state
+        .store
+        .rescan_faces(folder_id)
+        .map_err(|e| e.to_string())?;
+    // One directory pass for the whole folder — a per-photo pass made this
+    // command (and the button that awaits it) lag by seconds.
+    state
+        .preview
+        .delete_face_chips_many(&rows.iter().cloned().collect());
+    // A stale photo's faces leave the prototype pool until it is re-scanned
+    // (the compatibility rule), so the newly detected faces of the first
+    // photos back have little to match against. One sweep once the queue
+    // drains re-derives the folder's auto-labels from the restored prototypes.
+    faces::request_sweep();
+    Ok(rows.len())
+}
+
+/// Explicit user act; applied live (the worker reads the DB each cycle).
+/// Re-enabling after Delete-all starts indexing from scratch by design.
+///
+/// Serialized with every other enabled change and with privacy deletion across
+/// both processes (§Store::commit_enabled_intent) — including the case where
+/// a delete lands while this toggle is in flight, which the delete wins.
+#[tauri::command]
+fn set_faces_enabled(state: tauri::State<'_, AppState>, enabled: bool) -> Result<(), String> {
+    let config_dir = state.config_dir.clone();
+    let outcome = state
+        .store
+        .set_faces_enabled(enabled, &|value| {
+            settings::write_faces_enabled(&config_dir, value)
+        })
+        .map_err(|e| e.to_string())?;
+    if outcome.superseded {
+        // The DB's value is whatever the delete (and anything after it) left;
+        // this toggle deliberately did not decide it. The panel refetches
+        // status on the error, so it shows the real state either way.
+        return Err(
+            "All face data was deleted while this was in flight, so this change was not \
+             applied. Check the indexing switch and try again."
+                .into(),
+        );
+    }
+    match outcome.mirror_error {
+        None => Ok(()),
+        Some(e) => Err(format!(
+            "Face indexing is now {} in the app, but settings.toml could not be updated ({e}). \
+             The database keeps the setting and rewrites the file at the next launch.",
+            if enabled { "on" } else { "off" }
+        )),
+    }
 }
 
 #[tauri::command]
@@ -915,21 +1291,78 @@ pub fn run() {
             );
             let cache_dir = app.path().app_cache_dir()?.join("previews");
             std::fs::create_dir_all(&cache_dir)?;
-            let blinkies = settings::load(&data_dir);
-            let preview = Arc::new(preview::PreviewState::new(cache_dir, blinkies));
+            let cfg = settings::load(&data_dir);
+            let preview = Arc::new(preview::PreviewState::new(cache_dir, cfg.blinkies));
             preview::spawn_workers(preview.clone(), store.clone(), 6);
+            let repair = faces::spawn_chip_repair(preview.clone(), store.clone());
             let (tx, rx) = protocol::channel();
-            protocol::spawn_workers(preview.clone(), rx, 6);
+            protocol::spawn_workers(preview.clone(), repair, rx, 6);
             let recipe_store = recipes::RecipeStore::new(&data_dir);
             let exiftool = Arc::new(xmp::Exiftool::new());
             xmp::spawn_queue_worker(app.handle().clone(), store.clone(), exiftool.clone());
             metadata::spawn_worker(store.clone(), preview.clone(), exiftool.clone());
+            // Faces: a hand-edited settings.toml wins at launch; the DB copy
+            // is the cross-process authority from here on. If a previous
+            // app-driven write never reached the file (a failed privacy
+            // delete mirror, or a kill between the two), the DB wins instead
+            // and the file is rewritten from it — a completed deletion can
+            // never relaunch enabled. The file is re-read inside that
+            // transaction, so a change by the other process can't be adopted
+            // stale.
+            let sync_dir = data_dir.clone();
+            match store.sync_faces_enabled_from_settings(
+                &|| settings::load(&sync_dir).faces.enabled,
+                &|value| settings::write_faces_enabled(&sync_dir, value),
+            ) {
+                Ok(outcome) => {
+                    if let Some(e) = outcome.mirror_error {
+                        eprintln!(
+                            "faces: settings.toml could not be rewritten ({e}); the database \
+                             keeps deciding whether indexing runs"
+                        );
+                    }
+                }
+                Err(e) => eprintln!("faces: enabled-state sync failed: {e}"),
+            }
+            // A privacy delete whose chip sweep failed (or was interrupted)
+            // leaves this flag set. Biometric files are not something to
+            // forget about, so the sweep is owed until one succeeds.
+            if store.chip_sweep_pending().unwrap_or(false) {
+                match faces::purge_chips(&preview) {
+                    Ok(n) => {
+                        eprintln!("faces: completed a pending chip sweep ({n} files)");
+                        let _ = store.clear_chip_sweep_pending();
+                    }
+                    Err(e) => eprintln!("faces: pending chip sweep still failing: {e}"),
+                }
+            }
+            // Cache budget: one delayed pass per launch, oldest folders first,
+            // never the folder open in this session.
+            let active_folder = Arc::new(std::sync::atomic::AtomicI64::new(-1));
+            janitor::spawn(
+                store.clone(),
+                preview.clone(),
+                active_folder.clone(),
+                cfg.cache.max_mb,
+            );
+            faces::spawn_worker(
+                app.handle().clone(),
+                preview.clone(),
+                data_dir.join("ember.sqlite3"),
+                faces::models_dir(app.path().resource_dir().ok()),
+                cfg.faces,
+            );
             app.manage(AppState {
                 store,
                 preview,
                 exiftool,
                 recipes: recipe_store,
                 proto_tx: tx,
+                faces_cfg: cfg.faces,
+                config_dir: data_dir,
+                naming_ops: std::sync::Mutex::new(HashMap::new()),
+                naming_seq: std::sync::atomic::AtomicU64::new(1),
+                active_folder,
             });
             Ok(())
         })
@@ -967,6 +1400,26 @@ pub fn run() {
             set_order,
             save_perf_report,
             dev_flags,
+            faces_spike_stats,
+            face_clusters,
+            face_set_name,
+            undo_naming,
+            face_assign,
+            face_reject,
+            rename_person,
+            merge_persons,
+            set_faces_ignored,
+            list_persons,
+            person_faces,
+            person_map,
+            faces_for_photo,
+            face_scan_status,
+            face_calibration_report,
+            delete_face_data,
+            set_faces_enabled,
+            rescan_faces,
+            delete_person,
+            clear_auto_assignments,
             quit_app,
             frontend_log
         ])
@@ -976,7 +1429,10 @@ pub fn run() {
             // Both quit paths (quit_app and last-window-close) funnel through
             // ExitRequested: block until the XMP queue drains so acknowledged
             // verdicts reach their files before the process dies (spec §7).
+            // The face worker parks between photos first — tearing down the
+            // ONNX runtime mid-inference logs spurious kernel errors.
             if let tauri::RunEvent::ExitRequested { .. } = event {
+                faces::stop_and_wait(std::time::Duration::from_millis(500));
                 if let Some(s) = handle.try_state::<AppState>() {
                     let _ = xmp::drain_blocking(&s.store, std::time::Duration::from_secs(5));
                 }

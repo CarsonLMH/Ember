@@ -33,6 +33,17 @@ const DEFAULTS: &[(&str, &[&str], &str)] = &[
     ("recipe_filter", &["c"], "Recipe filter quick-switcher"),
     ("tag_palette", &["g"], "Tag palette"),
     ("tag_filter", &["Shift+g"], "Tag filter quick-switcher"),
+    ("people_panel", &["p"], "Toggle People panel"),
+    (
+        "person_filter",
+        &["Shift+p"],
+        "Person filter quick-switcher",
+    ),
+    (
+        "face_badges",
+        &["Shift+f"],
+        "Toggle face badges on the photo",
+    ),
     (
         "sort_cycle",
         &["s"],

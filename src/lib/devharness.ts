@@ -1,4 +1,16 @@
-import { devFlags, frontendLog, quitApp } from './ipc';
+import {
+  deletePerson,
+  devFlags,
+  faceClusters,
+  faceScanStatus,
+  faceSetName,
+  facesSpikeStats,
+  frontendLog,
+  isScanning,
+  personMap,
+  quitApp,
+} from './ipc';
+import * as keys from './keys';
 import * as perf from './perf';
 import * as session from './session';
 import * as viewer from './viewer';
@@ -170,17 +182,114 @@ export async function runIfRequested(): Promise<void> {
     return;
   }
 
+  // Slice C acceptance, automated: name a cluster, filter to that person
+  // WHILE the face worker is still scanning, and storm inside the filtered
+  // view. Proves the filter is real (every visible photo carries the person),
+  // that matches stream in mid-scan, and that flips stay fast under it.
+  if (flags.peopleTest) {
+    const st = session.getState();
+    const folderId = st.folderId;
+    if (folderId === null) {
+      frontendLog('info', 'peopletest done: FAIL (no folder)');
+      await quitApp();
+      return;
+    }
+    // Wait until enough faces exist to cluster (worker is still going).
+    let clusters = await faceClusters(folderId);
+    for (let i = 0; i < 60 && clusters.clusters.length === 0; i++) {
+      await sleep(1000);
+      clusters = await faceClusters(folderId);
+    }
+    const status = await faceScanStatus(folderId);
+    if (clusters.clusters.length === 0) {
+      frontendLog(
+        'info',
+        `peopletest done: FAIL (no clusters; scanned=${status.scanned}/${status.total} enabled=${status.enabled})`,
+      );
+      await sleep(200);
+      await quitApp();
+      return;
+    }
+    const target = clusters.clusters[0];
+    const named = await faceSetName(target.faceIds, 'HarnessPerson');
+    const personId = named.person.id;
+    const scanning = isScanning(await faceScanStatus(folderId));
+    await session.setPersonFilter(personId);
+    let s = session.getState();
+    const before = s.photos.length;
+    // Membership must be exact: every visible photo carries this person.
+    const map = await personMap(folderId);
+    const bogus = s.photos.filter((p) => !(map[p.id] ?? []).includes(personId));
+    // Let the sweep + live refetch land, then re-measure (matches stream in).
+    await sleep(4000);
+    s = session.getState();
+    const after = s.photos.length;
+    const report = await perf.flipStorm(60, 60);
+    // flips >= 10 guards against a vacuous pass: a filtered view shorter than
+    // the storm stops advancing at its end and records no samples.
+    const ok =
+      before > 0 &&
+      bogus.length === 0 &&
+      after >= before &&
+      report.flips >= 10 &&
+      report.p99 <= 50 &&
+      report.missServes === 0;
+    // ALWAYS tear down: this DB is the user's real one, and a leftover
+    // "HarnessPerson" once showed up in their face menus. delete_person is
+    // unconditional — undo_naming deliberately skips rows a later edit (or a
+    // concurrent re-detect) touched, so it cannot promise a clean exit.
+    const undone = await deletePerson(personId).catch(() => -1);
+    await session.setPersonFilter(null);
+    frontendLog(
+      'info',
+      `peopletest done: ${ok ? 'PASS' : 'FAIL'} named=${target.faceIds.length} ` +
+        `visible=${before}→${after}/${s.all.length} bogus=${bogus.length} ` +
+        `scanningWhenFiltered=${scanning} p99=${report.p99.toFixed(1)} ` +
+        `misses=${report.missServes}/${report.flips} cleanedUp=${undone}`,
+    );
+    await sleep(300);
+    await quitApp();
+    return;
+  }
+
   if (flags.storm) {
     frontendLog('info', 'waiting 30s for preview sweep before storm');
     await sleep(30_000);
     const pre = session.getState();
     frontendLog('info', `pre-storm cursor=${pre.cursor}/${pre.photos.length}`);
-    const report = await perf.flipStorm();
+    // Faces gate runs (EMBER_FACES_FORCE=1): snapshot spike counters around
+    // the measured window — the storm only counts if inference was ACTIVE
+    // during it, never assumed (review-1 gate integrity).
+    const spikeBefore = flags.facesForce ? await facesSpikeStats().catch(() => null) : null;
+    const report = await perf.flipStorm(300, 80, (r) => session.rate(r, performance.now()));
     const post = session.getState();
     frontendLog('info', `post-storm cursor=${post.cursor}/${post.photos.length}`);
+    let spikeTag = '';
+    if (flags.facesForce) {
+      const s0 = spikeBefore;
+      const s1 = await facesSpikeStats().catch(() => null);
+      const active = !!(s0 && s1 && s1.photos > s0.photos);
+      spikeTag = ` facesSpike=${active ? 'ACTIVE' : 'NOT-ACTIVE'}`;
+      frontendLog(
+        'info',
+        `faces-spike during storm: photos ${s0?.photos ?? '?'}→${s1?.photos ?? '?'} ` +
+          `passes=${s1?.passes ?? '?'} avg=${s1?.avgTotalMs.toFixed(1) ?? '?'}ms ` +
+          `(decode=${s1?.avgDecodeMs.toFixed(1) ?? '?'} detect=${s1?.avgDetectMs.toFixed(1) ?? '?'} ` +
+          `embed=${s1?.avgEmbedMs.toFixed(1) ?? '?'}) faces=${s1?.faces ?? '?'} ` +
+          `errors=${s1?.errors ?? '?'} rss=${s1?.rssMb ?? '?'}MB`,
+      );
+    }
+    const ack = report.ackSamples
+      ? ` ack(n=${report.ackSamples} p50=${report.ackP50?.toFixed(1)} p99=${report.ackP99?.toFixed(1)} max=${report.ackMax?.toFixed(1)})`
+      : '';
+    // A storm that recorded NO flips measured nothing — it once "passed"
+    // with misses=0/0 because the keyboard path was dead while the rating
+    // callback (which calls session.rate directly) still worked. The gate
+    // greps stormOk, so silence can never look like success.
+    const stormOk = report.flips > 0 && report.p99 <= 50 && report.missServes === 0;
     frontendLog(
       'info',
-      `storm done: p50=${report.p50.toFixed(1)} p99=${report.p99.toFixed(1)} max=${report.max.toFixed(1)} misses=${report.missServes}/${report.flips} coldOpen=${report.coldOpenMs?.toFixed(0)}ms`,
+      `storm done: p50=${report.p50.toFixed(1)} p99=${report.p99.toFixed(1)} max=${report.max.toFixed(1)} misses=${report.missServes}/${report.flips} coldOpen=${report.coldOpenMs?.toFixed(0)}ms${ack}${spikeTag} keys=${keys.currentBindings().length} stormOk=${stormOk}`,
     );
     await sleep(500);
     await quitApp();

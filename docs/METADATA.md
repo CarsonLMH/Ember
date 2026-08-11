@@ -54,3 +54,6 @@ consistent after a clean quit.
 - Date/time fields, GPS, or any capture metadata.
 - Color labels, pick/reject flags (they don't exist in Ember's model).
 - Anything outside `xmp:Rating`, `dc:subject`, and the star xattr.
+- Face data (SPEC §14) — deliberately DB-only: embeddings, person names and
+  face rects live in ember.sqlite3 and are never written to files or
+  sidecars. ("Export people as XMP keywords" is an open fast-follow.)

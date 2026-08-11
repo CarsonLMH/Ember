@@ -37,6 +37,36 @@ export function passesTagFilter(p: Photo, tag: string | null): boolean {
   return (p.tags ?? []).includes(tag);
 }
 
+/**
+ * Person filter (SPEC §14). The map is photo id → person ids with a visible
+ * assigned face; a photo the face index hasn't reached yet is simply absent,
+ * so it fails the filter until it's scanned — matches stream in as the worker
+ * progresses rather than the list lying about a complete answer.
+ */
+export function passesPersonFilter(
+  p: Photo,
+  personId: number | null,
+  map: Record<string, number[]>,
+): boolean {
+  if (personId === null) return true;
+  return (map[p.id] ?? []).includes(personId);
+}
+
+/**
+ * Preview-priority hint for the backend: everything the user can currently
+ * reach, nearest-first order, then every other photo in the folder.
+ *
+ * The old version appended only photos failing the STAR filter, so anything
+ * hidden by the recipe/tag/person axes vanished from the hint entirely and
+ * its preview never got prioritized — clearing that filter then hit cold
+ * cache. Visible-first ordering is what preserves flip-window preloading.
+ */
+export function orderHint(visible: Photo[], sortedAll: Photo[]): string[] {
+  const seen = new Set(visible.map((p) => p.id));
+  const rest = sortedAll.filter((p) => !seen.has(p.id)).map((p) => p.id);
+  return [...seen, ...rest];
+}
+
 export function passesFilter(p: Photo, filter: FilterMode): boolean {
   switch (filter) {
     case 'all':

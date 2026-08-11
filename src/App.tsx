@@ -13,6 +13,9 @@ import RecipeSwitcher from './components/RecipeSwitcher';
 import TagPalette from './components/TagPalette';
 import TagSwitcher from './components/TagSwitcher';
 import ExifPanel from './components/ExifPanel';
+import PeoplePanel from './components/PeoplePanel';
+import PersonSwitcher from './components/PersonSwitcher';
+import FaceBadges from './components/FaceBadges';
 import type { TrashedPhoto } from './lib/types';
 import './App.css';
 
@@ -213,14 +216,24 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [showPerf, setShowPerf] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
+  const [showPeople, setShowPeople] = useState(false);
   const [showCheat, setShowCheat] = useState(false);
   const [showRecipes, setShowRecipes] = useState(false);
   const [showTagPalette, setShowTagPalette] = useState(false);
   const [showTagFilter, setShowTagFilter] = useState(false);
-  // Ref mirror so the (deps-stable) global key handler sees the live values.
+  const [showPersonFilter, setShowPersonFilter] = useState(false);
+  // Ref mirror so the (deps-stable) global key handler sees the live value.
+  // Pickers/palettes own every key while mounted. The People panel does NOT:
+  // like the trash panel, it is a dock beside the viewer and culling continues
+  // while it is open — arrows, ratings, trash all stay live (owner decision at
+  // Slice A acceptance, reaffirmed 2026-08-11 after a review round gated them
+  // off; see docs/FACES_DEVIATIONS.md). Its inputs still own their own keys
+  // via the INPUT/TEXTAREA guard below, and Escape closes it.
   const overlayOpenRef = useRef(false);
-  overlayOpenRef.current = showRecipes || showTagPalette || showTagFilter;
+  overlayOpenRef.current =
+    showRecipes || showTagPalette || showTagFilter || showPersonFilter;
   const [showStrip, setShowStrip] = useState(localStorage.getItem('filmstrip') !== '0');
+  const [showFaces, setShowFaces] = useState(localStorage.getItem('faceBadges') !== '0');
   const [showExif, setShowExif] = useState(localStorage.getItem('exifPanel') === '1');
   const [keysReady, setKeysReady] = useState(false);
   const [keysError, setKeysError] = useState<string | null>(null);
@@ -270,6 +283,7 @@ export default function App() {
       if (e.key === 'Escape') {
         setShowCheat(false);
         setShowTrash(false);
+        setShowPeople(false);
         return;
       }
       const action = actionFor(e);
@@ -352,6 +366,19 @@ export default function App() {
           break;
         case 'tag_filter':
           setShowTagFilter((v) => !v);
+          break;
+        case 'people_panel':
+          setShowPeople((v) => !v);
+          setShowTrash(false); // same dock — one panel at a time
+          break;
+        case 'person_filter':
+          setShowPersonFilter((v) => !v);
+          break;
+        case 'face_badges':
+          setShowFaces((v) => {
+            localStorage.setItem('faceBadges', v ? '0' : '1');
+            return !v;
+          });
           break;
         case 'perf_hud':
           setShowPerf((v) => !v);
@@ -515,6 +542,10 @@ export default function App() {
       <div className="viewer-wrap">
         <canvas ref={canvasRef} className="viewer-canvas" />
 
+        {showFaces && photo && state.currentFaces && state.currentFaces.length > 0 && (
+          <FaceBadges faces={state.currentFaces} />
+        )}
+
         {photo && (
           <div className="hud">
             <span className="hud-name">{photo.stem}</span>
@@ -539,6 +570,11 @@ export default function App() {
               </span>
             )}
             {state.tagFilter && <span className="hud-chip">#{state.tagFilter}</span>}
+            {state.personFilter !== null && (
+              <span className="hud-chip">
+                @{state.persons.find((p) => p.id === state.personFilter)?.name ?? 'person'}
+              </span>
+            )}
             {photo.tags && photo.tags.length > 0 && (
               <span className="hud-chip hud-dim">
                 {photo.tags.slice(0, 2).map((t) => `#${t}`).join(' ')}
@@ -591,7 +627,10 @@ export default function App() {
             )}
             <button
               className="hud-trash-btn"
-              onClick={() => setShowTrash((v) => !v)}
+              onClick={() => {
+                setShowTrash((v) => !v);
+                setShowPeople(false); // same dock — one panel at a time
+              }}
               disabled={state.trashedCount === 0 && !showTrash}
             >
               trashed {state.trashedCount}
@@ -645,10 +684,25 @@ export default function App() {
       {showTrash && state.folderId !== null && (
         <TrashPanel folderId={state.folderId} onClose={() => setShowTrash(false)} />
       )}
+      {showPeople && state.folderId !== null && (
+        <PeoplePanel
+          // Keyed by folder: a folder change REMOUNTS the panel, so its
+          // folder-scoped state (rows, selections, prompts, in-flight loads)
+          // can never render — or be acted on — under the new folder's id.
+          key={state.folderId}
+          folderId={state.folderId}
+          trashedCount={state.trashedCount}
+          peopleVersion={state.peopleVersion}
+          onClose={() => setShowPeople(false)}
+          notify={(m) => session.notify(m)}
+          onJump={(id) => session.jumpToPhotoId(id)}
+        />
+      )}
       {showCheat && <CheatSheet onClose={() => setShowCheat(false)} />}
       {showRecipes && <RecipeSwitcher onClose={() => setShowRecipes(false)} />}
       {showTagPalette && <TagPalette onClose={() => setShowTagPalette(false)} />}
       {showTagFilter && <TagSwitcher onClose={() => setShowTagFilter(false)} />}
+      {showPersonFilter && <PersonSwitcher onClose={() => setShowPersonFilter(false)} />}
       {showPerf && <PerfHud />}
     </div>
   );

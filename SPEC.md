@@ -71,7 +71,7 @@ Manual refresh (`R`) reconciles external changes; missing files degrade graceful
 
 ## 11. Non-goals (v1)
 
-Videos, iPad, editing/RAW development, HDR/EDR, content detection, online recipe lookup, sequencing/curation (a future app consumes this one's XMP), GPS, batch rename, face detection, SD ingest, grid view, accounts/cloud. Color labels: declined. Seen-tracking: declined.
+Videos, iPad, editing/RAW development, HDR/EDR, content detection, online recipe lookup, sequencing/curation (a future app consumes this one's XMP), GPS, batch rename, SD ingest, grid view, accounts/cloud. Color labels: declined. Seen-tracking: declined. (Face detection was a v1 non-goal; it is now chartered post-v1 as §14.)
 
 ## 12. Post-v1 roadmap (ordered)
 
@@ -85,3 +85,47 @@ Videos, iPad, editing/RAW development, HDR/EDR, content detection, online recipe
 4. Pairing is same-directory only.
 5. `0` clears stars; B-roll needs no key.
 6. Filters combine with AND.
+
+## 14. Faces (post-v1)
+
+iOS-Photos-style people support scoped to Ember's shape: detect faces in the
+open folder, name recurring faces once, auto-recognize them from then on,
+filter the folder to a person.
+
+- **Stack**: on-device only — YuNet detector + SFace recognizer (opencv_zoo,
+  MIT/Apache-2.0) through ONNX Runtime (`ort`, CPU, statically linked).
+  Models bundled and pinned by SHA-256. Windows-portable by construction;
+  macOS builds are Apple Silicon only (no Intel ONNX Runtime prebuilts).
+- **Data**: SQLite only (DB tables `persons` / `faces` / `face_scan` — see
+  docs/METADATA.md). Face labels are NOT verdicts: never journaled, never in
+  Cmd+Z, never written to files or sidecars. Recoverability comes from
+  exact-prior-state undo on naming and durable per-face rejections ("not X"
+  can never be re-assigned by any automatic path).
+- **Indexing**: automatic background worker, one thread, lowest priority —
+  strictly after previews exist, cursor-prioritized, cached per file. Proven
+  by gate to leave the flip loop untouched (storm runs with inference pinned
+  active). All worker writes are conditional commits guarded by DB-backed
+  epoch/enabled/generation/revision checks — a user correction always beats
+  an in-flight scan, in any process.
+- **UX**: People panel (`p`, trash-panel style) — named people with counts,
+  rename, merge-on-rename-collision; unnamed recurring
+  clusters with one-line naming, per-face exclude, and "not a person / don't
+  label" for statues and photographed photos; faces seen only once are
+  collapsed and rescue-only (unlabeled is their resting state); undo toasts;
+  "rescan faces" re-detects a folder after a settings change, names intact.
+  On the photo: face badges (named only, `Shift+f` toggles) with a correction
+  menu, plus an unnamed-face count that reveals boxes for naming in place.
+  Person filter (`Shift+p`) AND-combines with stars/recipe/tag.
+- **Auto-recognition** is calibrated on real photos before it ships
+  (thresholds in settings.toml `[faces]`, measured 2026-08: assign at 0.45
+  with a 0.08 margin, detect at 0.8); prototypes come from user-confirmed
+  faces only — outliers excluded — with a margin test, so one mistake cannot
+  cascade. Corrections are absolute: "not X" bars X from every automatic
+  path, and naming X retracts it.
+- **Privacy**: "Delete all face data" wipes embeddings, names and chips AND
+  durably disables indexing (survives relaunch and concurrent processes);
+  re-enabling is an explicit act that starts from scratch. It fails closed:
+  if the settings file can't be updated the database keeps indexing off, and
+  if a face image file can't be removed the command says so instead of
+  reporting success — the removal is retried at the next launch. Everything is
+  local; nothing ever leaves the machine.

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { byCaptureOrder, comparator, passesFilter, passesTagFilter } from './order';
+import {
+  byCaptureOrder,
+  comparator,
+  orderHint,
+  passesFilter,
+  passesPersonFilter,
+  passesTagFilter,
+} from './order';
 import type { Photo } from './types';
 
 function photo(p: Partial<Photo>): Photo {
@@ -83,5 +90,45 @@ describe('passesTagFilter', () => {
     expect(passesTagFilter(photo({ tags: ['print', 'album'] }), 'album')).toBe(true);
     expect(passesTagFilter(photo({ tags: ['print'] }), 'album')).toBe(false);
     expect(passesTagFilter(photo({}), 'album')).toBe(false);
+  });
+});
+
+describe('passesPersonFilter', () => {
+  const map = { a: [1, 2], b: [2] };
+
+  it('null filter admits everything', () => {
+    expect(passesPersonFilter(photo({ stem: 'a' }), null, map)).toBe(true);
+    expect(passesPersonFilter(photo({ stem: 'zz' }), null, {})).toBe(true);
+  });
+
+  it('matches photos carrying that person', () => {
+    expect(passesPersonFilter(photo({ stem: 'a' }), 1, map)).toBe(true);
+    expect(passesPersonFilter(photo({ stem: 'a' }), 2, map)).toBe(true);
+    expect(passesPersonFilter(photo({ stem: 'b' }), 1, map)).toBe(false);
+  });
+
+  it('unscanned photos fail until the worker reaches them', () => {
+    expect(passesPersonFilter(photo({ stem: 'unseen' }), 1, map)).toBe(false);
+  });
+});
+
+describe('orderHint', () => {
+  it('lists visible ids first, then every remaining photo', () => {
+    const all = [photo({ stem: 'a' }), photo({ stem: 'b' }), photo({ stem: 'c' })];
+    const visible = [all[2], all[0]];
+    expect(orderHint(visible, all)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('never drops photos hidden by a non-star filter (the old wart)', () => {
+    const all = [photo({ stem: 'a', rating: 5 }), photo({ stem: 'b', rating: 5 })];
+    // 'b' is hidden by a tag/person filter, not by stars — it must still be
+    // hinted, or its preview is never prioritized.
+    expect(orderHint([all[0]], all)).toEqual(['a', 'b']);
+  });
+
+  it('is a no-op shape when nothing is filtered', () => {
+    const all = [photo({ stem: 'a' }), photo({ stem: 'b' })];
+    expect(orderHint(all, all)).toEqual(['a', 'b']);
+    expect(orderHint([], all)).toEqual(['a', 'b']);
   });
 });

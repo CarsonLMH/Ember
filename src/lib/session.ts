@@ -2,10 +2,15 @@ import * as imageCache from './imageCache';
 import * as perf from './perf';
 import * as viewer from './viewer';
 import {
+  facesEventApplies,
+  facesForPhoto,
   getFocus,
   getRecipe,
+  listPersons,
   listRecipes,
   maskUrl,
+  onFacesProgress,
+  personMap,
   recipeMap,
   onPhotoMeta,
   onXmpPending,
@@ -21,13 +26,17 @@ import {
   setTags,
   trashPhoto,
   undoAction,
+  type FaceOut,
+  type PersonOut,
 } from './ipc';
 import { clearMetaCache, ensureMeta } from './metaCache';
 import {
   FILTERS,
   SORTS,
   comparator,
+  orderHint,
   passesFilter,
+  passesPersonFilter,
   passesTagFilter,
   type FilterMode,
   type SortMode,
@@ -60,6 +69,15 @@ export interface SessionState {
   recipeFilter: string | null; // recipe name, or UNKNOWN_RECIPE sentinel
   recipeNames: string[];
   tagFilter: string | null;
+  /** Person filter (SPEC §14) — person id, session-only like the others. */
+  personFilter: number | null;
+  /** Folder-scoped people, for the switcher and the HUD chip label. */
+  persons: PersonOut[];
+  /** Faces of the current photo: null until scanned (badges stay silent). */
+  currentFaces: FaceOut[] | null;
+  /** Bumped on every people edit from anywhere — the panel watches it so a
+   * correction made on the photo refreshes its counts and clusters. */
+  peopleVersion: number;
   loading: boolean;
   error: string | null;
   notice: string | null;
@@ -90,6 +108,10 @@ let state: SessionState = {
   recipeFilter: null,
   recipeNames: [],
   tagFilter: null,
+  personFilter: null,
+  persons: [],
+  currentFaces: null,
+  peopleVersion: 0,
   loading: false,
   error: null,
   notice: null,
@@ -129,6 +151,15 @@ export function start(): void {
   if (started) return;
   started = true;
   void onPhotoMeta(applyPhotoMeta);
+  void onFacesProgress((p) => {
+    // Stale event from a folder we've since left — drop it. A folderless
+    // event (terminal engine failure) always applies.
+    if (!facesEventApplies(p, state.folderId)) return;
+    for (const id of p.photoIds) faceCache.delete(id);
+    const current = currentPhoto();
+    if (current && p.photoIds.includes(current.id)) void refreshFaces(current.id);
+    schedulePersonRefresh();
+  });
   void onXmpPending((s) => {
     // A write just got parked as permanently failed: say so once, loudly.
     if (s.failed > state.xmpFailed) {
@@ -138,6 +169,36 @@ export function start(): void {
     }
     setState({ xmpPending: s.pending, xmpFailed: s.failed, xmpLastError: s.lastError });
   });
+}
+
+/** People data (membership map, person list) failing must never be mistaken
+ * for "this person has no photos": we keep whatever we had and say so — once,
+ * so a persistent failure during a scan can't spam the HUD. */
+let personDataOk = true;
+function personDataFailed(what: string, e: unknown): void {
+  if (personDataOk) showNotice(`${what} unavailable — ${String(e)}`);
+  personDataOk = false;
+}
+
+/** Live person-filter membership while a scan runs: matches arrive in bounded
+ * batches (one refetch per quiet second) instead of a rebuild per photo. */
+let personRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+function schedulePersonRefresh(): void {
+  if (state.personFilter === null || state.folderId === null) return;
+  if (personRefreshTimer) return;
+  personRefreshTimer = setTimeout(() => {
+    personRefreshTimer = null;
+    const { folderId } = state;
+    if (state.personFilter === null || folderId === null) return;
+    void personMap(folderId)
+      .then((map) => {
+        if (state.folderId !== folderId) return; // folder changed mid-flight
+        personDataOk = true;
+        personMapCache = map;
+        rebuild(state.all, {}, currentPhoto()?.id ?? null);
+      })
+      .catch((e: unknown) => personDataFailed('Live person matches', e));
+  }, 1000);
 }
 
 function showNotice(msg: string): void {
@@ -172,6 +233,10 @@ export const UNKNOWN_RECIPE = '__unknown__';
 
 const recipeCache = new Map<string, { name: string | null; hasMeta: boolean }>();
 let recipeMapCache: Record<string, string | null> = {};
+/** photo id → person ids (SPEC §14); refreshed as the face worker progresses. */
+let personMapCache: Record<string, number[]> = {};
+/** Per-photo face rows for the HUD badges, invalidated by photo id. */
+const faceCache = new Map<string, FaceOut[] | null>();
 
 function passesRecipeFilter(p: Photo, recipeFilter: string | null): boolean {
   if (!recipeFilter) return true;
@@ -198,12 +263,15 @@ function rebuild(
   const recipeFilter =
     patch.recipeFilter !== undefined ? patch.recipeFilter : state.recipeFilter;
   const tagFilter = patch.tagFilter !== undefined ? patch.tagFilter : state.tagFilter;
+  const personFilter =
+    patch.personFilter !== undefined ? patch.personFilter : state.personFilter;
   const sortedAll = [...all].sort(comparator(sort, reverse));
   const photos = sortedAll.filter(
     (p) =>
       passesFilter(p, filter) &&
       passesRecipeFilter(p, recipeFilter) &&
-      passesTagFilter(p, tagFilter),
+      passesTagFilter(p, tagFilter) &&
+      passesPersonFilter(p, personFilter, personMapCache),
   );
   let cursor: number;
   const focusIdx = focusId ? photos.findIndex((p) => p.id === focusId) : -1;
@@ -215,7 +283,7 @@ function rebuild(
   setState({ ...patch, all: sortedAll, photos, cursor });
   showCurrent(null);
   schedulePreload();
-  setOrder(photos.map((p) => p.id).concat(sortedAll.filter((p) => !passesFilter(p, filter)).map((p) => p.id)));
+  setOrder(orderHint(photos, sortedAll));
   persistView();
 }
 
@@ -294,8 +362,16 @@ function showCurrent(eventTs: number | null): void {
   afterShow(photo);
 }
 
-/** Post-display concerns: full-res for zoom, AF overlay data. */
+/** Post-display concerns: full-res for zoom, AF overlay data, face badges. */
 function afterShow(photo: Photo): void {
+  // Show cached faces synchronously (no flash between flips), fetch otherwise.
+  const cachedFaces = faceCache.get(photo.id);
+  if (cachedFaces !== undefined) {
+    if (state.currentFaces !== cachedFaces) setState({ currentFaces: cachedFaces });
+  } else {
+    setState({ currentFaces: null });
+    void refreshFaces(photo.id);
+  }
   if (viewer.isZoomed()) {
     kickFullres(photo);
     for (const d of [1, -1]) {
@@ -361,6 +437,81 @@ export async function setRecipeFilter(recipeFilter: string | null): Promise<void
 
 export function setTagFilter(tagFilter: string | null): void {
   rebuild(state.all, { tagFilter }, currentPhoto()?.id ?? null);
+}
+
+// ---------- people (SPEC §14) ----------
+
+export async function setPersonFilter(personFilter: number | null): Promise<void> {
+  const folderId = state.folderId;
+  if (personFilter !== null && folderId !== null) {
+    try {
+      const map = await personMap(folderId);
+      // Every people answer is checked against the folder it was asked for:
+      // person ids and photo ids belong to one folder, and applying a slow
+      // reply to the folder the user has since opened would filter it with
+      // another folder's membership.
+      if (state.folderId !== folderId) return;
+      personMapCache = map;
+      personDataOk = true;
+    } catch (e) {
+      // Filtering against an empty map hides every photo and reads exactly
+      // like "this person isn't in this folder". Leave the view alone.
+      if (state.folderId === folderId) personDataFailed('Person filter', e);
+      return;
+    }
+  }
+  rebuild(state.all, { personFilter }, currentPhoto()?.id ?? null);
+}
+
+export function loadPersons(): void {
+  const folderId = state.folderId;
+  if (folderId === null) return;
+  void listPersons(folderId)
+    .then((persons) => {
+      if (state.folderId !== folderId) return; // another folder's roster
+      personDataOk = true;
+      setState({ persons });
+    })
+    .catch((e: unknown) => {
+      if (state.folderId === folderId) personDataFailed('People list', e);
+    });
+}
+
+/** Panel edits (naming, corrections, dismissals) change names, counts, badges
+ * and filter membership all at once — one refresh covers the lot. */
+export async function peopleChanged(): Promise<void> {
+  faceCache.clear();
+  loadPersons();
+  const folderId = state.folderId;
+  if (folderId !== null) {
+    try {
+      const map = await personMap(folderId);
+      if (state.folderId !== folderId) return; // the folder moved under us
+      personMapCache = map;
+      personDataOk = true;
+    } catch (e) {
+      // Keep the membership we had rather than emptying the filtered view.
+      if (state.folderId !== folderId) return;
+      personDataFailed('Person data', e);
+    }
+  }
+  rebuild(state.all, { peopleVersion: state.peopleVersion + 1 }, currentPhoto()?.id ?? null);
+  const photo = currentPhoto();
+  if (photo) void refreshFaces(photo.id);
+}
+
+/** Badges for the current photo, post-display and cache-backed: never on the
+ * flip critical path, and a cached photo re-renders its badges with no IPC. */
+async function refreshFaces(photoId: string): Promise<void> {
+  if (faceCache.has(photoId)) {
+    const hit = faceCache.get(photoId) ?? null;
+    if (currentPhoto()?.id === photoId) setState({ currentFaces: hit });
+    return;
+  }
+  const faces = await facesForPhoto(photoId).catch(() => null);
+  if (faceCache.size > 300) faceCache.clear();
+  faceCache.set(photoId, faces);
+  if (currentPhoto()?.id === photoId) setState({ currentFaces: faces });
 }
 
 /** Toggle a tag on the current photo. Journaled + undoable; no auto-advance —
@@ -520,6 +671,16 @@ export function onManualZoomChange(): void {
 // ---------- navigation ----------
 
 /** Jump to an absolute position in the visible list (Home/End, strip clicks). */
+/** Put the cursor on a specific photo (People panel chip → context). */
+export function jumpToPhotoId(id: string): void {
+  const idx = state.photos.findIndex((p) => p.id === id);
+  if (idx >= 0) {
+    jumpTo(idx);
+  } else if (state.all.some((p) => p.id === id)) {
+    showNotice('That photo is hidden by the current filter');
+  }
+}
+
 export function jumpTo(index: number): void {
   const { photos } = state;
   if (!photos.length) return;
@@ -782,11 +943,17 @@ export async function openFolder(dir: string): Promise<void> {
       missingCount: result.missingCount,
       currentRecipe: null,
       recipeFilter: null,
+      personFilter: null,
+      persons: [],
+      currentFaces: null,
     });
     recipeCache.clear();
     recipeMapCache = {};
+    personMapCache = {};
+    faceCache.clear();
     clearMetaCache();
     loadRecipeNames();
+    loadPersons();
     const current = state.photos[cursor];
     if (!current) {
       viewer.render(null);
@@ -824,7 +991,11 @@ export async function refresh(): Promise<void> {
   removed.clear();
   recipeCache.clear();
   recipeMapCache = {};
+  faceCache.clear();
   clearMetaCache();
+  // A rescan can re-detect faces (pixel changes mark scans stale), so the
+  // person map and people list are refetched rather than assumed.
+  void peopleChanged();
   rebuild(merged, { trashedCount: result.trashedCount, missingCount: result.missingCount }, keepId);
   showNotice('Folder rescanned');
 }

@@ -37,6 +37,12 @@ jobs:
         working-directory: src-tauri
       - run: cargo test
         working-directory: src-tauri
+      # The real-model faces fixture (ignored by default so plain `cargo test`
+      # stays fast everywhere): actual YuNet+SFace inference on a known face.
+      # The pinned .onnx models are committed, so a clean runner can run it —
+      # this is what catches silent preprocessing breakage.
+      - run: cargo test -- --ignored detects_known_face_and_embeds_deterministically
+        working-directory: src-tauri
       - run: cargo build
         working-directory: src-tauri
 # The perf/durability gates (scripts/gate.sh: flip-storm, zoomtest) need a

@@ -121,7 +121,11 @@ async function pacedWait(ms: number): Promise<void> {
  * event path, then reports on exactly those flips. This is the slice-1 exit
  * criterion: p99 ≤ 50ms AND zero non-cache serves in steady state.
  */
-export async function flipStorm(flips = 300, intervalMs = 80): Promise<PerfReport> {
+export async function flipStorm(
+  flips = 300,
+  intervalMs = 80,
+  rateFn?: (rating: number) => Promise<void>,
+): Promise<PerfReport> {
   // Glass-time measurement needs an unoccluded window (rAF throttles otherwise).
   await focusWindow().catch(() => {});
   // Start from the top so a resumed cursor can't run the storm off the end,
@@ -129,16 +133,26 @@ export async function flipStorm(flips = 300, intervalMs = 80): Promise<PerfRepor
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
   await sleep(1500);
   const before = ring.length;
+  const acks: number[] = [];
   for (let i = 0; i < flips; i++) {
     window.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }),
     );
+    // Every 10th flip also rates the current photo: measures the journal-ack
+    // round trip (rating → fsync'd verdict) under the same storm load. The
+    // rating advance renders via showCurrent(null), so flip stats stay pure.
+    if (rateFn && i % 10 === 9) {
+      const t0 = performance.now();
+      await rateFn((i % 5) + 1);
+      acks.push(performance.now() - t0);
+    }
     await pacedWait(intervalMs);
   }
   // Let trailing glass-time upgrades land (samples themselves are already in).
   await pacedWait(300);
   const measured = ring.slice(before);
   const lat = measured.map((s) => s.latencyMs).sort((a, b) => a - b);
+  const ackSorted = [...acks].sort((a, b) => a - b);
   const report: PerfReport = {
     kind: 'flip-storm',
     flips: measured.length,
@@ -149,6 +163,14 @@ export async function flipStorm(flips = 300, intervalMs = 80): Promise<PerfRepor
     missServes: measured.filter((s) => s.servedFrom !== 'bitmap-cache').length,
     coldOpenMs,
     generatedAt: new Date().toISOString(),
+    ...(acks.length
+      ? {
+          ackSamples: acks.length,
+          ackP50: percentile(ackSorted, 50),
+          ackP99: percentile(ackSorted, 99),
+          ackMax: ackSorted[ackSorted.length - 1],
+        }
+      : {}),
   };
   try {
     const path = await savePerfReport(report);

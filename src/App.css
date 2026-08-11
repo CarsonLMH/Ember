@@ -406,6 +406,340 @@ kbd {
   padding: 6px 0;
 }
 
+/* People panel (faces) — shares the trash panel shell. */
+.people-panel {
+  width: 300px;
+}
+
+.people-section {
+  margin: 10px 0 4px;
+  color: #999;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.people-progress {
+  color: #9ac;
+  padding: 2px 0 6px;
+}
+
+.people-error {
+  color: #eaa;
+  padding: 2px 0 6px;
+}
+
+.people-person {
+  flex-direction: column;
+  align-items: stretch !important;
+  gap: 4px !important;
+}
+
+.people-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  padding: 2px 0;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+.face-chip {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 50%;
+  background: #222;
+  flex-shrink: 0;
+}
+
+.people-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.people-count {
+  color: #888;
+}
+
+.people-faces {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.people-face {
+  position: relative;
+  display: inline-block;
+}
+
+.people-not {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: none;
+  background: #533;
+  color: #eaa;
+  font-size: 9px;
+  line-height: 16px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.people-not:hover {
+  background: #755;
+}
+
+.people-cluster {
+  flex-direction: column;
+  align-items: stretch !important;
+  gap: 4px !important;
+  border-top: 1px solid #2a2a2a;
+  padding-top: 8px !important;
+}
+
+.people-input {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #ddd;
+  font-size: 12px;
+  padding: 4px 6px;
+  width: 100%;
+}
+
+.people-input:focus {
+  outline: none;
+  border-color: #567;
+}
+
+.people-toast {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: #1e2a1e;
+  border: 1px solid #354;
+  border-radius: 6px;
+}
+
+.people-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 0 6px;
+  border-top: 1px solid #2a2a2a;
+}
+
+.people-danger {
+  color: #daa;
+}
+
+.people-dim {
+  color: #777;
+  font-size: 11px;
+}
+
+.face-chip-link {
+  cursor: pointer;
+}
+
+.face-chip-link:hover {
+  outline: 2px solid #567;
+}
+
+.face-chip-selected {
+  outline: 2px solid #7a9;
+}
+
+.people-more {
+  align-self: center;
+  background: none;
+  border: 1px solid #333;
+  border-radius: 12px;
+  color: #999;
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.people-more:hover {
+  border-color: #567;
+  color: #bbb;
+}
+
+.people-cluster-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.people-loose {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #2a2a2a;
+}
+
+/* Face badges over the photo (SPEC §14). The layer is inert so pan/pinch
+   still reach the canvas; only the controls take pointer events. */
+.face-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.face-ring {
+  position: absolute;
+  border: 1.5px solid rgba(150, 210, 255, 0.5);
+  border-radius: 3px;
+}
+
+.face-ring-auto {
+  border-style: dashed;
+}
+
+/* Centred under the face box and sized by its TEXT, never by the box — a
+   distant face is a few pixels wide and a truncated name reads as noise. */
+.face-badge {
+  position: absolute;
+  transform: translate(-50%, 3px);
+  padding: 1px 8px;
+  background: rgba(20, 20, 20, 0.82);
+  border: 1px solid rgba(150, 210, 255, 0.35);
+  border-radius: 10px;
+  color: #dfe8f0;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.face-badge:hover {
+  border-color: #9cf;
+  background: rgba(30, 34, 38, 0.95);
+}
+
+.face-ring-unnamed {
+  border-style: dashed;
+  border-color: rgba(190, 190, 190, 0.5);
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+/* The generic `button:hover` background out-specifies a single class, so the
+   box filled solid grey over the face exactly when you hovered to click it. */
+.face-ring-unnamed:hover,
+.face-ring-unnamed:focus {
+  background: none;
+  border-color: #9cf;
+}
+
+/* Bottom-RIGHT: the histogram panel owns bottom-left and the notice owns
+   bottom-centre — both render after this layer and were eating the clicks. */
+.face-unnamed-row {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  gap: 6px;
+}
+
+.face-unnamed {
+  padding: 2px 8px;
+  background: rgba(20, 20, 20, 0.75);
+  border: 1px solid #333;
+  border-radius: 10px;
+  color: #888;
+  font-size: 11px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.face-unnamed:hover {
+  color: #ccc;
+  border-color: #567;
+}
+
+.face-menu {
+  position: absolute;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 170px;
+  padding: 6px;
+  background: rgba(20, 20, 20, 0.96);
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  pointer-events: auto;
+}
+
+.face-menu-head {
+  color: #888;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 4px 4px;
+}
+
+.face-menu button {
+  text-align: left;
+  padding: 4px 6px;
+  font-size: 12px;
+  border-radius: 4px;
+}
+
+.face-menu button:hover {
+  background: #2a2f33;
+}
+
+.people-confirm {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+  color: #daa;
+  padding-bottom: 4px;
+}
+
+.people-toast-btns {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.people-disabled p {
+  margin: 4px 0;
+}
+
+.people-hint {
+  color: #888;
+}
+
 .overlay-msg {
   position: absolute;
   inset: 0;

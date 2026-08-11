@@ -43,6 +43,15 @@ objc2-foundation = { version = "0.3.2", features = [
 xattr = "1.6.1"
 plist = "1.10.0"
 toml = "1.1.4"
+# Faces (SPEC §14): CPU-only ONNX Runtime, pinned rc — API churns between rcs.
+# `download-binaries` fetches a static lib at build time; ORT_LIB_PATH overrides.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = [
+    "download-binaries",
+    "tls-native",
+    "ndarray",
+    "std",
+] }
+sha2 = "0.10"
 
 [profile.dev]
 # JPEG decode in unoptimized builds is unusably slow; keep deps optimized.

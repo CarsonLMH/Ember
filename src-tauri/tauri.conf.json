@@ -26,6 +26,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "models/face_detection_yunet_2023mar.onnx": "models/face_detection_yunet_2023mar.onnx",
+      "models/face_recognition_sface_2021dec.onnx": "models/face_recognition_sface_2021dec.onnx",
+      "models/LICENSE-yunet.txt": "models/LICENSE-yunet.txt",
+      "models/LICENSE-sface.txt": "models/LICENSE-sface.txt"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

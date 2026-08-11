@@ -111,6 +111,30 @@ pub struct MissingPhoto {
     pub tags: Vec<String>,
 }
 
+/// Migration helper: add a column only when it is genuinely absent (checked
+/// via `pragma_table_info`), so a duplicate is skipped by *verification* while
+/// every real ALTER failure propagates — a migration must never be recorded
+/// as done on a swallowed error.
+fn add_column_if_absent(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    decl: &str,
+) -> rusqlite::Result<()> {
+    let exists = conn
+        .prepare(&format!(
+            "SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1"
+        ))?
+        .exists(params![column])?;
+    if !exists {
+        conn.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"),
+            [],
+        )?;
+    }
+    Ok(())
+}
+
 impl Store {
     pub fn new(path: &Path) -> rusqlite::Result<Self> {
         let conn = Connection::open(path)?;
@@ -191,9 +215,89 @@ impl Store {
             let _ = conn.execute("ALTER TABLE xmp_queue ADD COLUMN tags TEXT", []);
             conn.pragma_update(None, "user_version", 4)?;
         }
+        // v5: faces (SPEC §14). DB-only, not verdicts: no journal rows, no
+        // undo entanglement. Schema notes live with the face code (facestore.rs).
+        if version < 5 {
+            conn.execute_batch(crate::facestore::SCHEMA_V5)?;
+            conn.pragma_update(None, "user_version", 5)?;
+        }
+        // v6: chip scan identity + model release rank (round-3 review).
+        // - face_scan.chip_revision names the detection whose crops are baked;
+        //   existing rows adopt their face_revision (their chips predate the
+        //   revisioned filenames anyway and rebake on first request).
+        // - face_state['scan_seq'] is the durable counter chip_revision is
+        //   drawn from; it must start ABOVE every value already adopted, or a
+        //   post-migration commit could re-mint an identity an existing row
+        //   (and its files) already carries.
+        // - face_model_gens.release ranks model sets so an unseen old model
+        //   can never register over a newer one; pre-rank rows read 0 until
+        //   the ranked build of the same models adopts them (register_gen).
+        // Each column is added only if genuinely absent (a fresh DB's
+        // SCHEMA_V5 already contains both); any REAL failure propagates and
+        // leaves user_version at 5 so the migration is retried, never
+        // half-recorded.
+        if version < 6 {
+            add_column_if_absent(
+                &conn,
+                "face_scan",
+                "chip_revision",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+            conn.execute(
+                "UPDATE face_scan SET chip_revision = face_revision WHERE chip_revision = 0",
+                [],
+            )?;
+            conn.execute(
+                "INSERT OR IGNORE INTO face_state (key, value)
+                 VALUES ('scan_seq', (SELECT COALESCE(MAX(face_revision), 0) FROM face_scan))",
+                [],
+            )?;
+            add_column_if_absent(
+                &conn,
+                "face_model_gens",
+                "release",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+            conn.pragma_update(None, "user_version", 6)?;
+        }
+        // Idempotent guard, every open: a DB stamped v6 before the counter
+        // existed (the round-4 working-tree build) skipped the seeding above,
+        // and a missing row would restart identities at 1 — able to re-mint a
+        // chip name already on record. Seed it above every identity the DB
+        // holds; a no-op wherever the row exists (fresh DBs and the v6
+        // migration both create it).
+        conn.execute(
+            "INSERT OR IGNORE INTO face_state (key, value)
+             VALUES ('scan_seq', (SELECT COALESCE(MAX(chip_revision), 0) FROM face_scan))",
+            [],
+        )?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
+    }
+
+    /// Face methods live in facestore.rs (same crate, second impl block).
+    pub(crate) fn lock_conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap()
+    }
+
+    // ---------- cache janitor inputs ----------
+
+    /// Every known photo id → its folder (trashed included: their thumbnails
+    /// serve the trash panel and age out with the folder like everything else).
+    pub fn cache_photo_folders(&self) -> rusqlite::Result<HashMap<String, i64>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, folder_id FROM photos")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        rows.collect()
+    }
+
+    /// folder_id → updated_at (bumped on every open — recency for eviction).
+    pub fn folder_recency(&self) -> rusqlite::Result<HashMap<i64, i64>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, updated_at FROM folders")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
+        rows.collect()
     }
 
     // ---------- folders / scan ----------
@@ -707,6 +811,12 @@ impl Store {
 
     /// Remove a completed job — but only if the rating hasn't changed since it
     /// was taken (a newer keypress re-queues with a different value).
+    ///
+    /// KNOWN FOLLOW-UP (predates faces, reported in docs/reviews/faces/REVIEW_ROUND4.md §6): the
+    /// compare-and-delete token is (photo_id, rating) only, so a tags-only
+    /// re-edit at the same rating can be deleted by the older job's
+    /// completion and its file write lost. The fix is a per-job monotonic
+    /// token compared here — deliberately deferred out of the faces branch.
     pub fn xmp_done(&self, photo_id: &str, written_rating: u8) -> rusqlite::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
