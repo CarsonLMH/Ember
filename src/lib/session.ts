@@ -2,6 +2,7 @@ import * as imageCache from './imageCache';
 import * as perf from './perf';
 import * as viewer from './viewer';
 import {
+  facesEventApplies,
   facesForPhoto,
   getFocus,
   getRecipe,
@@ -151,8 +152,9 @@ export function start(): void {
   started = true;
   void onPhotoMeta(applyPhotoMeta);
   void onFacesProgress((p) => {
-    // Stale event from a folder we've since left — drop it.
-    if (p.folderId !== null && p.folderId !== state.folderId) return;
+    // Stale event from a folder we've since left — drop it. A folderless
+    // event (terminal engine failure) always applies.
+    if (!facesEventApplies(p, state.folderId)) return;
     for (const id of p.photoIds) faceCache.delete(id);
     const current = currentPhoto();
     if (current && p.photoIds.includes(current.id)) void refreshFaces(current.id);
@@ -169,6 +171,15 @@ export function start(): void {
   });
 }
 
+/** People data (membership map, person list) failing must never be mistaken
+ * for "this person has no photos": we keep whatever we had and say so — once,
+ * so a persistent failure during a scan can't spam the HUD. */
+let personDataOk = true;
+function personDataFailed(what: string, e: unknown): void {
+  if (personDataOk) showNotice(`${what} unavailable — ${String(e)}`);
+  personDataOk = false;
+}
+
 /** Live person-filter membership while a scan runs: matches arrive in bounded
  * batches (one refetch per quiet second) instead of a rebuild per photo. */
 let personRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -182,10 +193,11 @@ function schedulePersonRefresh(): void {
     void personMap(folderId)
       .then((map) => {
         if (state.folderId !== folderId) return; // folder changed mid-flight
+        personDataOk = true;
         personMapCache = map;
         rebuild(state.all, {}, currentPhoto()?.id ?? null);
       })
-      .catch(() => {});
+      .catch((e: unknown) => personDataFailed('Live person matches', e));
   }, 1000);
 }
 
@@ -430,17 +442,39 @@ export function setTagFilter(tagFilter: string | null): void {
 // ---------- people (SPEC §14) ----------
 
 export async function setPersonFilter(personFilter: number | null): Promise<void> {
-  if (personFilter !== null && state.folderId !== null) {
-    personMapCache = await personMap(state.folderId).catch(() => ({}));
+  const folderId = state.folderId;
+  if (personFilter !== null && folderId !== null) {
+    try {
+      const map = await personMap(folderId);
+      // Every people answer is checked against the folder it was asked for:
+      // person ids and photo ids belong to one folder, and applying a slow
+      // reply to the folder the user has since opened would filter it with
+      // another folder's membership.
+      if (state.folderId !== folderId) return;
+      personMapCache = map;
+      personDataOk = true;
+    } catch (e) {
+      // Filtering against an empty map hides every photo and reads exactly
+      // like "this person isn't in this folder". Leave the view alone.
+      if (state.folderId === folderId) personDataFailed('Person filter', e);
+      return;
+    }
   }
   rebuild(state.all, { personFilter }, currentPhoto()?.id ?? null);
 }
 
 export function loadPersons(): void {
-  if (state.folderId === null) return;
-  void listPersons(state.folderId)
-    .then((persons) => setState({ persons }))
-    .catch(() => {});
+  const folderId = state.folderId;
+  if (folderId === null) return;
+  void listPersons(folderId)
+    .then((persons) => {
+      if (state.folderId !== folderId) return; // another folder's roster
+      personDataOk = true;
+      setState({ persons });
+    })
+    .catch((e: unknown) => {
+      if (state.folderId === folderId) personDataFailed('People list', e);
+    });
 }
 
 /** Panel edits (naming, corrections, dismissals) change names, counts, badges
@@ -448,8 +482,18 @@ export function loadPersons(): void {
 export async function peopleChanged(): Promise<void> {
   faceCache.clear();
   loadPersons();
-  if (state.folderId !== null) {
-    personMapCache = await personMap(state.folderId).catch(() => ({}));
+  const folderId = state.folderId;
+  if (folderId !== null) {
+    try {
+      const map = await personMap(folderId);
+      if (state.folderId !== folderId) return; // the folder moved under us
+      personMapCache = map;
+      personDataOk = true;
+    } catch (e) {
+      // Keep the membership we had rather than emptying the filtered view.
+      if (state.folderId !== folderId) return;
+      personDataFailed('Person data', e);
+    }
   }
   rebuild(state.all, { peopleVersion: state.peopleVersion + 1 }, currentPhoto()?.id ?? null);
   const photo = currentPhoto();

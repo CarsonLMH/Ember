@@ -6,6 +6,7 @@ import {
   faceSetName,
   facesSpikeStats,
   frontendLog,
+  isScanning,
   personMap,
   quitApp,
 } from './ipc';
@@ -212,8 +213,7 @@ export async function runIfRequested(): Promise<void> {
     const target = clusters.clusters[0];
     const named = await faceSetName(target.faceIds, 'HarnessPerson');
     const personId = named.person.id;
-    const mid = await faceScanStatus(folderId);
-    const scanning = mid.scanned < mid.total;
+    const scanning = isScanning(await faceScanStatus(folderId));
     await session.setPersonFilter(personId);
     let s = session.getState();
     const before = s.photos.length;

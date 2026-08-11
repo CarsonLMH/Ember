@@ -451,6 +451,13 @@ pub fn one_face_per_person(
 /// both bars are conservative without being fragile.
 pub const CARRY_IOU: f32 = 0.5;
 pub const CARRY_COSINE: f32 = 0.5;
+/// How far an old face's best new candidate must lead its runner-up before
+/// the correspondence counts as confident. A genuine re-detection of the same
+/// face overlaps its predecessor almost completely while every OTHER face in
+/// the photo overlaps it barely or not at all, so two candidates this close
+/// mean the detector split or merged something — and transferring a name on a
+/// coin flip is exactly what "ambiguous matches lapse" forbids.
+pub const CARRY_MARGIN: f32 = 0.10;
 
 pub struct CarrySide<'a> {
     /// Normalized display-space rect.
@@ -463,14 +470,19 @@ pub struct CarrySide<'a> {
 /// Same-generation: rect-IoU AND embedding similarity must both clear their
 /// bars. Cross-generation (either side's embedding withheld by the caller):
 /// geometric correspondence only — embeddings from different model
-/// generations are never comparable. Ambiguity (an old face whose best new
-/// match is already claimed by a stronger old face) drops the match: that
-/// face's state lapses to Unnamed by design.
+/// generations are never comparable.
+///
+/// Ambiguity lapses, on both sides: an old face whose two best new candidates
+/// are within `CARRY_MARGIN` of each other transfers to neither (there is no
+/// confident answer to "which of these is it?"), and an old face whose best
+/// new match is claimed by a stronger old face keeps nothing. Lapsed state
+/// returns to Unnamed by design.
 pub fn match_carry_over(old: &[CarrySide], new: &[CarrySide]) -> Vec<(usize, usize)> {
-    // Best new candidate per old face, then greedy by IoU strength so a
-    // contested new face goes to the strongest overlap.
     let mut candidates: Vec<(f32, usize, usize)> = Vec::new();
     for (oi, o) in old.iter().enumerate() {
+        // Every new detection this old face could plausibly be, strongest
+        // overlap first — the runner-up decides whether it is confident.
+        let mut plausible: Vec<(f32, usize)> = Vec::new();
         for (ni, n) in new.iter().enumerate() {
             let iou_v = iou(&o.rect, &n.rect);
             if iou_v < CARRY_IOU {
@@ -481,9 +493,22 @@ pub fn match_carry_over(old: &[CarrySide], new: &[CarrySide]) -> Vec<(usize, usi
                     continue;
                 }
             }
-            candidates.push((iou_v, oi, ni));
+            plausible.push((iou_v, ni));
         }
+        plausible.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let Some(&(best, ni)) = plausible.first() else {
+            continue;
+        };
+        if plausible
+            .get(1)
+            .is_some_and(|&(second, _)| best - second < CARRY_MARGIN)
+        {
+            continue; // two equally plausible replacements — lapse
+        }
+        candidates.push((best, oi, ni));
     }
+    // Greedy by IoU strength so a new face contested by two old ones goes to
+    // the strongest overlap; the loser's state lapses.
     candidates.sort_by(|a, b| b.0.total_cmp(&a.0));
     let mut used_old = vec![false; old.len()];
     let mut used_new = vec![false; new.len()];
@@ -742,6 +767,43 @@ mod tests {
         }];
         let pairs = match_carry_over(&old_amb, &new_amb);
         assert_eq!(pairs, vec![(0, 0)], "contested new face goes to best IoU");
+    }
+
+    /// The other ambiguity: ONE old face whose best two replacements are
+    /// nearly as plausible as each other. Handing its name to whichever
+    /// overlapped a hair more is a coin flip — the state has to lapse.
+    #[test]
+    fn carry_over_lapses_when_two_new_faces_are_equally_plausible() {
+        let old = [CarrySide {
+            rect: [0.10, 0.1, 0.2, 0.2],
+            embedding: None,
+        }];
+        let close = [
+            CarrySide {
+                rect: [0.11, 0.1, 0.2, 0.2], // IoU ≈ 0.905
+                embedding: None,
+            },
+            CarrySide {
+                rect: [0.115, 0.1, 0.2, 0.2], // IoU ≈ 0.861 — within the margin
+                embedding: None,
+            },
+        ];
+        assert!(
+            match_carry_over(&old, &close).is_empty(),
+            "a contested old face keeps nothing"
+        );
+        // A clear winner still carries: the runner-up is far enough behind.
+        let decisive = [
+            CarrySide {
+                rect: [0.11, 0.1, 0.2, 0.2], // IoU ≈ 0.905
+                embedding: None,
+            },
+            CarrySide {
+                rect: [0.15, 0.1, 0.2, 0.2], // IoU ≈ 0.667
+                embedding: None,
+            },
+        ];
+        assert_eq!(match_carry_over(&old, &decisive), vec![(0, 0)]);
     }
 
     #[test]

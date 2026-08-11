@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 import * as session from '../lib/session';
 import * as viewer from '../lib/viewer';
-import { faceReject, faceSetName, setFacesIgnored, type FaceOut } from '../lib/ipc';
+import {
+  faceAssign,
+  faceReject,
+  faceSetName,
+  setFacesIgnored,
+  type FaceOut,
+} from '../lib/ipc';
 
 /**
  * Named-face badges over the photo (SPEC §14) and the on-photo correction
@@ -21,9 +27,11 @@ export default function FaceBadges({ faces }: { faces: FaceOut[] }) {
    * unnamed, and it must be re-labelable without hunting through the panel. */
   const [showUnnamed, setShowUnnamed] = useState(false);
 
-  // Reposition when the canvas transform changes (resize, zoom in/out, flip).
-  // In fit mode these are discrete events, not a gesture stream.
-  useEffect(() => viewer.subscribe(() => bump((v) => v + 1)), []);
+  // Reposition on DISCRETE layout changes only (resize, zoom in/out, flip).
+  // Subscribing to every viewer change would re-render this component for
+  // every frame of a pinch — badges are fit-mode-only, so those frames have
+  // nothing to say to it.
+  useEffect(() => viewer.subscribeLayout(() => bump((v) => v + 1)), []);
   useEffect(() => {
     setMenuFor(null);
     setNaming(false);
@@ -67,6 +75,29 @@ export default function FaceBadges({ faces }: { faces: FaceOut[] }) {
       return;
     }
     void session.peopleChanged();
+  };
+
+  /**
+   * One face, one name typed in the menu. Which backend call that is depends
+   * on whether the name already exists:
+   *
+   * - an EXISTING person is a single-face correction → `face_assign`, which is
+   *   exactly that and nothing else;
+   * - a NEW name creates the person → `face_set_name`, which owns creation and
+   *   the undo-naming toast.
+   *
+   * Routing a correction through `face_set_name` also worked, but it is the
+   * bulk-naming op: it registers an undo entry nothing can reach from here and
+   * asks for a folder-wide auto-assign sweep, for one face the user just told
+   * us about. Names match the way the backend matches them — normalized, so
+   * "nati" finds "Nati".
+   */
+  const nameFace = (faceId: number, typed: string) => {
+    const norm = typed.trim().toLowerCase();
+    const existing = session.getState().persons.find((p) => p.name.trim().toLowerCase() === norm);
+    return existing
+      ? act(() => faceAssign(faceId, existing.id))
+      : act(() => faceSetName([faceId], typed.trim()));
   };
 
   return (
@@ -165,7 +196,7 @@ export default function FaceBadges({ faces }: { faces: FaceOut[] }) {
                       }
                       if (e.key !== 'Enter') return;
                       const name = (e.target as HTMLInputElement).value.trim();
-                      if (name) void act(() => faceSetName([faceId], name));
+                      if (name) void nameFace(faceId, name);
                     }}
                   />
                   {/* Existing names autocomplete; a new one creates a person. */}

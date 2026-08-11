@@ -43,6 +43,10 @@ let afPoint: AfPoint | null = null;
 let afVisible = false;
 
 let changeListeners: Array<() => void> = [];
+/** Listeners that only care about fit-mode DOM chrome (face badges) — see
+ * `subscribeLayout`. Kept apart from `changeListeners` on purpose. */
+let layoutListeners: Array<() => void> = [];
+let lastLayoutKey = '';
 
 const BG = '#141414';
 const MAX_OVER_100 = 4;
@@ -65,14 +69,43 @@ function alive(b: ImageBitmap | null): b is ImageBitmap {
   return b !== null && b.width > 0 && b.height > 0;
 }
 
+/** Everything a fit-mode overlay's geometry depends on: the canvas backing
+ * store, the displayed image, and whether we are in fit mode at all. Pan and
+ * zoom inside a gesture leave this untouched — which is the point. */
+function layoutKey(): string {
+  const cw = canvas?.width ?? 0;
+  const ch = canvas?.height ?? 0;
+  const pw = alive(preview) ? preview.width : 0;
+  const ph = alive(preview) ? preview.height : 0;
+  return `${cw}x${ch}|${view ? 'zoom' : 'fit'}|${pw}x${ph}`;
+}
+
 function notifyChange(): void {
   for (const l of changeListeners) l();
+  const key = layoutKey();
+  if (key === lastLayoutKey) return;
+  lastLayoutKey = key;
+  for (const l of layoutListeners) l();
 }
 
 export function subscribe(fn: () => void): () => void {
   changeListeners.push(fn);
   return () => {
     changeListeners = changeListeners.filter((l) => l !== fn);
+  };
+}
+
+/**
+ * Subscribe to DISCRETE layout changes only (resize, photo swap, entering or
+ * leaving zoom) — never to the 60–120Hz gesture stream `subscribe` carries.
+ * Face badges are fit-mode-only DOM chrome: waking React for every pinch frame
+ * would put chrome work on the interaction path, which is exactly what this
+ * app keeps off it.
+ */
+export function subscribeLayout(fn: () => void): () => void {
+  layoutListeners.push(fn);
+  return () => {
+    layoutListeners = layoutListeners.filter((l) => l !== fn);
   };
 }
 

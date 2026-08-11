@@ -36,6 +36,11 @@ pub struct AppState {
     /// Session-scoped undo-naming registry (toast-lifetime, not history).
     naming_ops: std::sync::Mutex<HashMap<u64, facestore::NamingOp>>,
     naming_seq: std::sync::atomic::AtomicU64,
+    /// The folder this session has open (-1 = none). The cache janitor needs
+    /// the folder ITSELF, not the photos currently listed: an open folder
+    /// whose photos are all trashed has no live ids, and its previews are the
+    /// only copy the Trash panel can show.
+    active_folder: Arc<std::sync::atomic::AtomicI64>,
 }
 
 #[derive(Serialize)]
@@ -75,6 +80,9 @@ fn scan_folder(
     // through a symlink; the user-supplied string stays the folders-table key.
     let root = std::fs::canonicalize(&root).unwrap_or(root);
     let folder = state.store.open_folder(&dir).map_err(|e| e.to_string())?;
+    state
+        .active_folder
+        .store(folder.folder_id, std::sync::atomic::Ordering::Relaxed);
     let entries = scanner::scan(&root);
     // Must run before sync_photos so `existing` sees cleared trash flags.
     reconcile_external_restores(&state.store, folder.folder_id, &entries);
@@ -93,10 +101,14 @@ fn scan_folder(
                     let _ = std::fs::remove_file(f);
                 }
                 let _ = state.store.clear_preview(&e.id);
+                // Anything still being computed from the preview we just
+                // deleted (face inference, chips) is now about pixels that no
+                // longer exist — bump the generation so it discards early.
+                state.preview.invalidate_preview(&e.id);
                 // Faces: keep the rows (carry-over source for assignments and
                 // rejections), just mark stale + drop the baked chips.
-                if let Ok(n) = state.store.mark_face_stale(&e.id) {
-                    state.preview.delete_face_chips(&e.id, n);
+                if state.store.mark_face_stale(&e.id).is_ok() {
+                    state.preview.delete_face_chips(&e.id);
                 }
             }
             _ => {
@@ -111,6 +123,9 @@ fn scan_folder(
                     ] {
                         let _ = std::fs::remove_file(f);
                     }
+                    // Same reasoning as the branch above: a preview we just
+                    // removed can still have inference running against it.
+                    state.preview.invalidate_preview(&e.id);
                 }
             }
         }
@@ -1003,6 +1018,9 @@ fn merge_persons(
     source_id: i64,
     target_id: i64,
 ) -> Result<usize, String> {
+    if source_id == target_id {
+        return Err("a person cannot be merged into themselves".into());
+    }
     state
         .store
         .merge_persons(source_id, target_id)
@@ -1058,26 +1076,60 @@ fn face_scan_status(
 ) -> Result<serde_json::Value, String> {
     let s = state
         .store
-        .face_scan_status(folder_id)
+        .face_scan_status(folder_id, &faces::exhausted_errors())
         .map_err(|e| e.to_string())?;
     Ok(serde_json::json!({
         "enabled": s.enabled,
         "total": s.total,
         "scanned": s.scanned,
+        // Terminal failures only; an error the worker will still retry is
+        // `retrying` and stays inside `pending`, so the panel neither
+        // declares a photo failed mid-schedule nor finishes early.
         "errors": s.errors,
+        "retrying": s.retrying,
+        // What the panel's "Scanning…" keys off: a photo parked in a terminal
+        // error is finished, not pending, so an exhausted failure no longer
+        // reads as an indexing run that never ends.
+        "pending": s.pending,
         "engineError": faces::engine_error(),
     }))
 }
 
 /// Privacy delete: wipes all face data AND durably disables indexing (in
 /// both processes — the DB is the authority). No automatic reindex follows.
+///
+/// Fails closed at every step. The DB wipe and the settings.toml write happen
+/// inside one SQLite writer-lock critical section (§Store::delete_face_data),
+/// so no concurrent toggle in the other process can leave the file saying
+/// `enabled = true` behind a disabled DB; if the file write fails, the DB
+/// stays authoritative at the next launch. Chip cleanup runs after the commit,
+/// when no publish can create a file any more — and if it cannot finish, this
+/// command reports the failure instead of claiming a successful deletion, with
+/// the DB's `chip_sweep_pending` flag keeping the retry owed.
 #[tauri::command]
 fn delete_face_data(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    state.store.delete_face_data().map_err(|e| e.to_string())?;
-    state.preview.delete_all_face_chips();
+    let config_dir = state.config_dir.clone();
+    let outcome = state
+        .store
+        .delete_face_data(&|enabled| settings::write_faces_enabled(&config_dir, enabled))
+        .map_err(|e| e.to_string())?;
     state.naming_ops.lock().unwrap().clear();
-    settings::write_faces_enabled(&state.config_dir, false).map_err(|e| e.to_string())?;
-    Ok(())
+    let swept = faces::purge_chips(&state.preview);
+    if swept.is_ok() {
+        let _ = state.store.clear_chip_sweep_pending();
+    }
+    match (swept, outcome.mirror_error) {
+        (Ok(_), None) => Ok(()),
+        (Err(e), _) => Err(format!(
+            "Face data was deleted from the database and indexing is off, but some face image \
+             files could not be removed ({e}). They will be removed at the next launch — or \
+             delete ~/Library/Caches/com.cleung.ember yourself now."
+        )),
+        (Ok(_), Some(e)) => Err(format!(
+            "Face data was deleted and indexing is off, but settings.toml could not be updated \
+             ({e}). Indexing stays off — the app rewrites the file at the next launch."
+        )),
+    }
 }
 
 /// Throw away recognition's guesses in this folder, keeping every label the
@@ -1111,22 +1163,50 @@ fn rescan_faces(state: tauri::State<'_, AppState>, folder_id: i64) -> Result<usi
         .store
         .rescan_faces(folder_id)
         .map_err(|e| e.to_string())?;
-    for (photo_id, count) in &rows {
-        state.preview.delete_face_chips(photo_id, *count);
+    for photo_id in &rows {
+        state.preview.delete_face_chips(photo_id);
     }
+    // A stale photo's faces leave the prototype pool until it is re-scanned
+    // (the compatibility rule), so the newly detected faces of the first
+    // photos back have little to match against. One sweep once the queue
+    // drains re-derives the folder's auto-labels from the restored prototypes.
+    faces::request_sweep();
     Ok(rows.len())
 }
 
 /// Explicit user act; applied live (the worker reads the DB each cycle).
 /// Re-enabling after Delete-all starts indexing from scratch by design.
+///
+/// Serialized with every other enabled change and with privacy deletion across
+/// both processes (§Store::commit_enabled_intent) — including the case where
+/// a delete lands while this toggle is in flight, which the delete wins.
 #[tauri::command]
 fn set_faces_enabled(state: tauri::State<'_, AppState>, enabled: bool) -> Result<(), String> {
-    state
+    let config_dir = state.config_dir.clone();
+    let outcome = state
         .store
-        .set_faces_enabled(enabled)
+        .set_faces_enabled(enabled, &|value| {
+            settings::write_faces_enabled(&config_dir, value)
+        })
         .map_err(|e| e.to_string())?;
-    settings::write_faces_enabled(&state.config_dir, enabled).map_err(|e| e.to_string())?;
-    Ok(())
+    if outcome.superseded {
+        // The DB's value is whatever the delete (and anything after it) left;
+        // this toggle deliberately did not decide it. The panel refetches
+        // status on the error, so it shows the real state either way.
+        return Err(
+            "All face data was deleted while this was in flight, so this change was not \
+             applied. Check the indexing switch and try again."
+                .into(),
+        );
+    }
+    match outcome.mirror_error {
+        None => Ok(()),
+        Some(e) => Err(format!(
+            "Face indexing is now {} in the app, but settings.toml could not be updated ({e}). \
+             The database keeps the setting and rewrites the file at the next launch.",
+            if enabled { "on" } else { "off" }
+        )),
+    }
 }
 
 #[tauri::command]
@@ -1220,11 +1300,49 @@ pub fn run() {
             xmp::spawn_queue_worker(app.handle().clone(), store.clone(), exiftool.clone());
             metadata::spawn_worker(store.clone(), preview.clone(), exiftool.clone());
             // Faces: a hand-edited settings.toml wins at launch; the DB copy
-            // is the cross-process authority from here on.
-            let _ = store.sync_faces_enabled_from_settings(cfg.faces.enabled);
+            // is the cross-process authority from here on. If a previous
+            // app-driven write never reached the file (a failed privacy
+            // delete mirror, or a kill between the two), the DB wins instead
+            // and the file is rewritten from it — a completed deletion can
+            // never relaunch enabled. The file is re-read inside that
+            // transaction, so a change by the other process can't be adopted
+            // stale.
+            let sync_dir = data_dir.clone();
+            match store.sync_faces_enabled_from_settings(
+                &|| settings::load(&sync_dir).faces.enabled,
+                &|value| settings::write_faces_enabled(&sync_dir, value),
+            ) {
+                Ok(outcome) => {
+                    if let Some(e) = outcome.mirror_error {
+                        eprintln!(
+                            "faces: settings.toml could not be rewritten ({e}); the database \
+                             keeps deciding whether indexing runs"
+                        );
+                    }
+                }
+                Err(e) => eprintln!("faces: enabled-state sync failed: {e}"),
+            }
+            // A privacy delete whose chip sweep failed (or was interrupted)
+            // leaves this flag set. Biometric files are not something to
+            // forget about, so the sweep is owed until one succeeds.
+            if store.chip_sweep_pending().unwrap_or(false) {
+                match faces::purge_chips(&preview) {
+                    Ok(n) => {
+                        eprintln!("faces: completed a pending chip sweep ({n} files)");
+                        let _ = store.clear_chip_sweep_pending();
+                    }
+                    Err(e) => eprintln!("faces: pending chip sweep still failing: {e}"),
+                }
+            }
             // Cache budget: one delayed pass per launch, oldest folders first,
             // never the folder open in this session.
-            janitor::spawn(store.clone(), preview.clone(), cfg.cache.max_mb);
+            let active_folder = Arc::new(std::sync::atomic::AtomicI64::new(-1));
+            janitor::spawn(
+                store.clone(),
+                preview.clone(),
+                active_folder.clone(),
+                cfg.cache.max_mb,
+            );
             faces::spawn_worker(
                 app.handle().clone(),
                 preview.clone(),
@@ -1242,6 +1360,7 @@ pub fn run() {
                 config_dir: data_dir,
                 naming_ops: std::sync::Mutex::new(HashMap::new()),
                 naming_seq: std::sync::atomic::AtomicU64::new(1),
+                active_folder,
             });
             Ok(())
         })

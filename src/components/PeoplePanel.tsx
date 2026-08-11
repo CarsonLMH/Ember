@@ -8,6 +8,8 @@ import {
   faceReject,
   faceScanStatus,
   faceSetName,
+  facesEventApplies,
+  isScanning,
   listPersons,
   mergePersons,
   onFacesProgress,
@@ -23,15 +25,19 @@ import {
   type FaceScanStatus,
   type PersonOut,
 } from '../lib/ipc';
+import { makeLoadGuard } from '../lib/loadguard';
 import * as session from '../lib/session';
 
 /** Chip img with the 404-retry pattern: the face route enqueues a repair on
  * miss and the retry query busts WebKit's negative cache when it lands.
+ * `revision` is part of the chip's identity (and its URL) — a re-detection
+ * changes it, so an older crop can never be shown for the current rows.
  * Clicking jumps the viewer to the photo — the cheapest possible answer to
  * "who IS this?": full context, zero new UI. */
 function FaceChip({
   photoId,
   faceIndex,
+  revision,
   size = 44,
   onJump,
   onPress,
@@ -40,6 +46,7 @@ function FaceChip({
 }: {
   photoId: string;
   faceIndex: number;
+  revision: number;
   size?: number;
   onJump?: (photoId: string) => void;
   /** Overrides click (e.g. selection in the loose grid). */
@@ -49,18 +56,34 @@ function FaceChip({
 }) {
   const [attempt, setAttempt] = useState(0);
   const alive = useRef(true);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     alive.current = true;
     return () => {
       alive.current = false;
     };
   }, []);
+  // The retry budget belongs to ONE artifact identity. This component can
+  // outlive it (a person row keyed by person id gets a new representative
+  // after a rescan), so an identity change must start the budget over and
+  // cancel any timer the old artifact scheduled — otherwise a chip that
+  // exhausted its 15 misses would leave its successor with zero retries, and
+  // an old timer could burn the new artifact's attempts.
+  useEffect(() => {
+    setAttempt(0);
+    return () => {
+      if (retryTimer.current) {
+        clearTimeout(retryTimer.current);
+        retryTimer.current = null;
+      }
+    };
+  }, [photoId, faceIndex, revision]);
   const clickable = onPress ?? (onJump ? () => onJump(photoId) : undefined);
   return (
     <img
       className={`face-chip${clickable ? ' face-chip-link' : ''}${selected ? ' face-chip-selected' : ''}`}
       style={{ width: size, height: size }}
-      src={`${faceChipUrl(photoId, faceIndex)}?r=${attempt}`}
+      src={`${faceChipUrl(photoId, faceIndex, revision)}?r=${attempt}`}
       loading="lazy"
       alt=""
       title={onPress ? pressTitle : onJump ? 'Show this photo' : undefined}
@@ -68,9 +91,10 @@ function FaceChip({
       onError={() => {
         // Each miss enqueues a repair; on a wiped cache the preview must
         // regenerate first, so the tail retries stretch out (~30s total).
-        if (attempt < 15) {
-          setTimeout(
+        if (attempt < 15 && !retryTimer.current) {
+          retryTimer.current = setTimeout(
             () => {
+              retryTimer.current = null;
               if (alive.current) setAttempt((a) => a + 1);
             },
             attempt < 5 ? 800 : 2500,
@@ -85,6 +109,12 @@ type UndoToast =
   | { kind: 'naming'; opId: number; label: string }
   | { kind: 'dismiss'; faceIds: number[]; label: string };
 
+/** NOTE: App mounts this with `key={folderId}`, so a folder change REPLACES
+ * the component instance. That is the folder-ownership guarantee: every piece
+ * of state below belongs to exactly one folder for the whole life of the
+ * instance — there is no render frame where the old folder's rows can appear
+ * (or be acted on) under the new folder's id, and promises started by the old
+ * instance resolve into a disposed guard and dead setters. */
 export default function PeoplePanel({
   folderId,
   trashedCount,
@@ -127,10 +157,37 @@ export default function PeoplePanel({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // `notify` is a fresh closure on every App render; a ref keeps `load`
+  // (and the effects that depend on it) stable.
+  const notifyRef = useRef(notify);
+  notifyRef.current = notify;
+
+  /** Every load is stamped; only the newest, on a still-mounted instance, may
+   * write state or raise a notification. Clustering a folder takes as long as
+   * it takes, so a slow answer must not land on top of a newer one — and once
+   * this instance unmounts (folder switch = remount by key), every probe it
+   * handed out answers false forever, failure toasts included. */
+  const guard = useRef(makeLoadGuard());
+  useEffect(() => {
+    const g = guard.current;
+    return () => g.dispose();
+  }, []);
   const load = useCallback(() => {
-    void faceScanStatus(folderId).then(setStatus).catch(() => {});
-    void listPersons(folderId).then(setPersons).catch(() => {});
-    void faceClusters(folderId).then(setClusters).catch(() => {});
+    const fresh = guard.current.begin();
+    const fail = (what: string) => (e: unknown) => {
+      // Silence here reads as "no people in this folder" — say it instead
+      // (but never for a folder the user has already left).
+      if (fresh()) notifyRef.current(`${what} unavailable — ${String(e)}`);
+    };
+    void faceScanStatus(folderId)
+      .then((s) => fresh() && setStatus(s))
+      .catch(fail('Face indexing status'));
+    void listPersons(folderId)
+      .then((p) => fresh() && setPersons(p))
+      .catch(fail('People list'));
+    void faceClusters(folderId)
+      .then((c) => fresh() && setClusters(c))
+      .catch(fail('Unnamed faces'));
   }, [folderId]);
 
   /** After a panel EDIT: refresh the panel and everything outside it that
@@ -149,7 +206,7 @@ export default function PeoplePanel({
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const unlisten = onFacesProgress((p) => {
-      if (p.folderId !== null && p.folderId !== folderId) return; // stale event
+      if (!facesEventApplies(p, folderId)) return; // stale event
       if (timer) return;
       timer = setTimeout(() => {
         timer = null;
@@ -167,7 +224,15 @@ export default function PeoplePanel({
       setExpandedFaces([]);
       return;
     }
-    void personFaces(expanded, folderId).then(setExpandedFaces).catch(() => {});
+    let alive = true; // a slower answer for the previously expanded person
+    void personFaces(expanded, folderId)
+      .then((faces) => alive && setExpandedFaces(faces))
+      .catch((e: unknown) => {
+        if (alive) notifyRef.current(`Faces for this person unavailable — ${String(e)}`);
+      });
+    return () => {
+      alive = false;
+    };
   }, [expanded, folderId]);
 
   const showUndo = (toast: UndoToast) => {
@@ -359,7 +424,7 @@ export default function PeoplePanel({
     }
   };
 
-  const scanning = status && status.enabled && status.scanned < status.total;
+  const scanning = isScanning(status);
 
   return (
     <div className="trash-panel people-panel">
@@ -386,12 +451,15 @@ export default function PeoplePanel({
             (scanning ? (
               <div className="people-progress">
                 Scanning faces… {status.scanned}/{status.total}
+                {status.retrying > 0 ? ` (${status.retrying} retrying)` : ''}
                 {status.errors > 0 ? ` (${status.errors} failed)` : ''}
               </div>
             ) : (
               status.total > 0 && (
                 <div className="people-hint">
-                  All {status.total} photos indexed
+                  {/* Finished, not "still going": a photo whose retries are
+                      exhausted is counted here rather than left pending. */}
+                  {status.scanned} of {status.total} photos indexed
                   {status.errors > 0 ? ` (${status.errors} failed)` : ''}
                 </div>
               )
@@ -422,8 +490,12 @@ export default function PeoplePanel({
                     onClick={() => setExpanded(expanded === p.id ? null : p.id)}
                     title="Show this person's faces"
                   >
-                    {p.repPhotoId !== null && p.repFaceIndex !== null && (
-                      <FaceChip photoId={p.repPhotoId} faceIndex={p.repFaceIndex} />
+                    {p.repPhotoId !== null && p.repFaceIndex !== null && p.repRevision !== null && (
+                      <FaceChip
+                        photoId={p.repPhotoId}
+                        faceIndex={p.repFaceIndex}
+                        revision={p.repRevision}
+                      />
                     )}
                     {renaming === p.id ? (
                       <input
@@ -456,7 +528,12 @@ export default function PeoplePanel({
                       <div className="people-faces">
                         {expandedFaces.map((f) => (
                           <span key={f.faceId} className="people-face">
-                            <FaceChip photoId={f.photoId} faceIndex={f.faceIndex} onJump={onJump} />
+                            <FaceChip
+                              photoId={f.photoId}
+                              faceIndex={f.faceIndex}
+                              revision={f.revision}
+                              onJump={onJump}
+                            />
                             <button
                               className="people-not"
                               title={`Not ${p.name}`}
@@ -501,6 +578,7 @@ export default function PeoplePanel({
                         <FaceChip
                           photoId={chip.photoId}
                           faceIndex={chip.faceIndex}
+                          revision={chip.revision}
                           onJump={onJump}
                         />
                         <button
@@ -594,6 +672,7 @@ export default function PeoplePanel({
                         key={chip.faceId}
                         photoId={chip.photoId}
                         faceIndex={chip.faceIndex}
+                        revision={chip.revision}
                         selected={looseSelected.has(chip.faceId)}
                         pressTitle="Select this face"
                         onPress={() =>

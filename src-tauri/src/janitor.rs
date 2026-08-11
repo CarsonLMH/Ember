@@ -11,6 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
 use crate::preview::PreviewState;
@@ -59,11 +60,20 @@ fn collect_groups(cache_dir: &Path) -> Vec<Group> {
 }
 
 /// Evict until the cache fits the budget. Returns (evicted, kept) bytes.
+///
+/// `active_folder` is the folder this session actually has open, passed in
+/// rather than inferred: `protected` holds only the photos currently LISTED,
+/// which excludes the open folder's trashed ones — and inferring the folder
+/// from that set fails exactly when it matters, in a folder where every photo
+/// has been trashed. A trashed photo's files have left the folder, so nothing
+/// can regenerate its preview, and the Trash panel serves it straight from
+/// this cache.
 pub fn run_once(
     cache_dir: &Path,
     photo_folders: &HashMap<String, i64>,
     folder_recency: &HashMap<i64, i64>,
     protected: &HashSet<String>,
+    active_folder: Option<i64>,
     max_bytes: u64,
 ) -> (u64, u64) {
     let mut groups = collect_groups(cache_dir);
@@ -84,7 +94,11 @@ pub fn run_once(
         if total <= max_bytes {
             break;
         }
-        if protected.contains(&g.id) {
+        let in_active_folder = match (active_folder, photo_folders.get(&g.id)) {
+            (Some(active), Some(fid)) => *fid == active,
+            _ => false,
+        };
+        if protected.contains(&g.id) || in_active_folder {
             continue;
         }
         for f in &g.files {
@@ -97,7 +111,13 @@ pub fn run_once(
 }
 
 /// One pass per launch, delayed off the startup path. `max_mb == 0` disables.
-pub fn spawn(store: Arc<Store>, preview: Arc<PreviewState>, max_mb: u64) {
+/// `active_folder` is written by `scan_folder`; -1 means no folder is open.
+pub fn spawn(
+    store: Arc<Store>,
+    preview: Arc<PreviewState>,
+    active_folder: Arc<AtomicI64>,
+    max_mb: u64,
+) {
     if max_mb == 0 {
         return;
     }
@@ -108,11 +128,16 @@ pub fn spawn(store: Arc<Store>, preview: Arc<PreviewState>, max_mb: u64) {
             let photo_folders = store.cache_photo_folders().unwrap_or_default();
             let folder_recency = store.folder_recency().unwrap_or_default();
             let protected = preview.current_ids();
+            let active = match active_folder.load(Ordering::Relaxed) {
+                id if id >= 0 => Some(id),
+                _ => None,
+            };
             let (evicted, kept) = run_once(
                 preview.cache_dir(),
                 &photo_folders,
                 &folder_recency,
                 &protected,
+                active,
                 max_mb * 1024 * 1024,
             );
             if evicted > 0 {
@@ -169,6 +194,7 @@ mod tests {
             &photo_folders,
             &folder_recency,
             &protected,
+            Some(2),
             250 * 1024,
         );
         assert!(evicted > 0);
@@ -195,9 +221,73 @@ mod tests {
             &photo_folders,
             &folder_recency,
             &protected,
+            Some(2),
             10 * 1024 * 1024,
         );
         assert_eq!(evicted, 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A trashed photo of the OPEN folder is not in the live id set (its files
+    /// left the folder), but the Trash panel serves its cached preview and
+    /// nothing can regenerate one. Evicting it would break restore-me
+    /// thumbnails mid-session, so the whole active folder is protected —
+    /// **including when every photo in it has been trashed**, which is exactly
+    /// the case where the folder could not be inferred from the live ids.
+    #[test]
+    fn the_open_folders_trashed_photos_are_never_evicted() {
+        let dir = std::env::temp_dir().join(format!("emberjant-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let open = "1111111111111111"; // listed in the open folder
+        let trashed = "2222222222222222"; // same folder, trashed → not listed
+        let elsewhere = "3333333333333333"; // a more recently opened folder
+        for id in [open, trashed, elsewhere] {
+            write(&dir, &format!("{id}.jpg"), 90);
+        }
+        let photo_folders: HashMap<String, i64> =
+            [(open.into(), 7), (trashed.into(), 7), (elsewhere.into(), 8)].into();
+        // Folder 8 is the more recent one, so ordinary recency would evict
+        // the open folder's trashed photo first.
+        let folder_recency: HashMap<i64, i64> = [(7, 100), (8, 200)].into();
+        let protected: HashSet<String> = [open.to_string()].into();
+        let (evicted, _) = run_once(
+            &dir,
+            &photo_folders,
+            &folder_recency,
+            &protected,
+            Some(7),
+            100 * 1024,
+        );
+        assert!(evicted > 0, "the budget forced an eviction");
+        assert!(dir.join(format!("{open}.jpg")).exists());
+        assert!(
+            dir.join(format!("{trashed}.jpg")).exists(),
+            "the trash panel still needs this preview"
+        );
+        assert!(
+            !dir.join(format!("{elsewhere}.jpg")).exists(),
+            "another folder's photo is the one that goes"
+        );
+
+        // The case the live-id inference could not see: the open folder now
+        // has NO listed photo (everything in it is trashed), so `protected` is
+        // empty and only the passed-in folder id can save its previews.
+        write(&dir, &format!("{elsewhere}.jpg"), 90);
+        let (evicted, _) = run_once(
+            &dir,
+            &photo_folders,
+            &folder_recency,
+            &HashSet::new(),
+            Some(7),
+            100 * 1024,
+        );
+        assert!(evicted > 0);
+        assert!(
+            dir.join(format!("{trashed}.jpg")).exists(),
+            "an all-trashed open folder is still the open folder"
+        );
+        assert!(!dir.join(format!("{elsewhere}.jpg")).exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -208,7 +298,7 @@ mod tests {
         let id = "eeeeeeeeeeeeeeee";
         write(&dir, &format!("{id}.jpg"), 50);
         let protected: HashSet<String> = [id.to_string()].into();
-        let (evicted, kept) = run_once(&dir, &HashMap::new(), &HashMap::new(), &protected, 1);
+        let (evicted, kept) = run_once(&dir, &HashMap::new(), &HashMap::new(), &protected, None, 1);
         assert_eq!(evicted, 0, "the open folder is never evicted");
         assert!(kept > 0);
         assert!(dir.join(format!("{id}.jpg")).exists());

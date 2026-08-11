@@ -191,12 +191,18 @@ export interface PersonOut {
   folderCount: number;
   repPhotoId: string | null;
   repFaceIndex: number | null;
+  /** Chip revision of the representative face's photo — see `faceChipUrl`. */
+  repRevision: number | null;
 }
 
 export interface ChipRef {
   photoId: string;
   faceIndex: number;
   faceId: number;
+  /** The detection revision whose baked chip file this refers to. URLs carry
+   * it, so a crop surviving from an older scan can never be served (or shown
+   * from the webview's image cache) as the current one. */
+  revision: number;
 }
 
 export interface FaceCluster {
@@ -229,8 +235,36 @@ export interface FaceScanStatus {
   enabled: boolean;
   total: number;
   scanned: number;
+  /** Terminal failures only — photos whose session retries are exhausted. */
   errors: number;
+  /** Failed photos the worker will still retry (5s/30s/180s schedule, fresh
+   * per session). Counted inside `pending`, so the panel keeps scanning. */
+  retrying: number;
+  /** Photos with work still outstanding (never scanned, stale, or errored
+   * with retries remaining). A photo parked in a terminal error is finished,
+   * not pending — see `isScanning`. */
+  pending: number;
   engineError: string | null;
+}
+
+/** Is the worker still going to touch this folder? `scanned < total` is not
+ * the same question: a photo whose retries are exhausted never becomes
+ * `scanned`, and reading that as "still scanning" left the People panel on
+ * "Scanning…" forever after a single terminal failure. */
+export function isScanning(status: FaceScanStatus | null): boolean {
+  return !!status && status.enabled && status.pending > 0;
+}
+
+/** Does a `faces-progress` event concern the folder we are showing?
+ * `folderId: null` means "whatever folder you have open" — the worker emits it
+ * for terminal engine failures, which have no folder of their own, and it must
+ * NOT be dropped as stale. Shared by the session and the People panel so the
+ * two can never disagree about which events they see. */
+export function facesEventApplies(
+  event: FacesProgress,
+  currentFolderId: number | null,
+): boolean {
+  return event.folderId === null || event.folderId === currentFolderId;
 }
 
 export interface NamingResponse {
@@ -346,8 +380,12 @@ export function onFacesProgress(cb: (p: FacesProgress) => void): Promise<Unliste
   return listen<FacesProgress>('faces-progress', (e) => cb(e.payload));
 }
 
-export function faceChipUrl(photoId: string, faceIndex: number): string {
-  return `photo://localhost/face/${photoId}/${faceIndex}`;
+/** Chip URLs name the exact detection (`revision` = the photo's chip
+ * revision): after a re-detection the URL itself changes, so neither the
+ * protocol nor the webview's image cache can ever present an older scan's
+ * crop as the current one. */
+export function faceChipUrl(photoId: string, faceIndex: number, revision: number): string {
+  return `photo://localhost/face/${photoId}/${faceIndex}/${revision}`;
 }
 
 export function quitApp(): Promise<void> {

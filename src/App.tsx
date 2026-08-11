@@ -222,10 +222,15 @@ export default function App() {
   const [showTagPalette, setShowTagPalette] = useState(false);
   const [showTagFilter, setShowTagFilter] = useState(false);
   const [showPersonFilter, setShowPersonFilter] = useState(false);
-  // Ref mirror so the (deps-stable) global key handler sees the live values.
+  // Ref mirrors so the (deps-stable) global key handler sees the live values.
+  // Pickers own every key while mounted; the People panel is a dock panel, so
+  // it keeps `p` (its toggle) and Escape but must swallow the culling keys —
+  // rating or trashing the photo behind an open panel is never intended.
   const overlayOpenRef = useRef(false);
   overlayOpenRef.current =
     showRecipes || showTagPalette || showTagFilter || showPersonFilter;
+  const panelOpenRef = useRef(false);
+  panelOpenRef.current = showPeople;
   const [showStrip, setShowStrip] = useState(localStorage.getItem('filmstrip') !== '0');
   const [showFaces, setShowFaces] = useState(localStorage.getItem('faceBadges') !== '0');
   const [showExif, setShowExif] = useState(localStorage.getItem('exifPanel') === '1');
@@ -282,6 +287,8 @@ export default function App() {
       }
       const action = actionFor(e);
       if (!action) return;
+      // With the People panel open, only its own toggle gets through.
+      if (panelOpenRef.current && action !== 'people_panel') return;
       e.preventDefault();
       // Key-repeat is for scanning, not for verdicts or toggles.
       if (e.repeat && action !== 'next' && action !== 'prev') return;
@@ -680,6 +687,10 @@ export default function App() {
       )}
       {showPeople && state.folderId !== null && (
         <PeoplePanel
+          // Keyed by folder: a folder change REMOUNTS the panel, so its
+          // folder-scoped state (rows, selections, prompts, in-flight loads)
+          // can never render — or be acted on — under the new folder's id.
+          key={state.folderId}
           folderId={state.folderId}
           trashedCount={state.trashedCount}
           peopleVersion={state.peopleVersion}

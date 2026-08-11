@@ -23,6 +23,10 @@ struct Inner {
     anchor: usize,
     in_flight: HashSet<String>,
     done: HashSet<String>,
+    /// Monotonic per-photo preview generation (absent = 0). Bumped whenever a
+    /// photo's cached preview is invalidated, so background work derived from
+    /// the old pixels can be discarded before it commits.
+    preview_gen: HashMap<String, u64>,
 }
 
 pub struct PreviewState {
@@ -57,6 +61,7 @@ impl PreviewState {
                 anchor: 0,
                 in_flight: HashSet::new(),
                 done: HashSet::new(),
+                preview_gen: HashMap::new(),
             }),
             cv: Condvar::new(),
         }
@@ -78,37 +83,70 @@ impl PreviewState {
         self.cache_dir.join(format!("{id}-t.jpg"))
     }
 
-    /// Face chip `{id}-f{n}.jpg` — square crop baked by the face worker,
-    /// self-healed by the repair queue (cache dir is safe to delete).
-    pub fn face_chip_path(&self, id: &str, n: i64) -> PathBuf {
-        self.cache_dir.join(format!("{id}-f{n}.jpg"))
+    /// Face chip `{id}-f{n}r{rev}.jpg` — square crop baked by the face worker,
+    /// self-healed by the repair queue (cache dir is safe to delete). The
+    /// name carries the `chip_revision` of the detection that produced the
+    /// crop: an artifact from an older scan has a different name and can never
+    /// satisfy a current request, however the process died in between.
+    pub fn face_chip_path(&self, id: &str, n: i64, revision: i64) -> PathBuf {
+        self.cache_dir.join(face_chip_name(id, n, revision))
     }
 
-    /// Pixel invalidation / stale marking: drop this photo's baked chips.
-    pub fn delete_face_chips(&self, id: &str, count: i64) {
-        for n in 0..count.max(0) {
-            let _ = std::fs::remove_file(self.face_chip_path(id, n));
-        }
-    }
-
-    /// Delete-all-face-data cleanup: sweep every baked chip in the cache.
-    pub fn delete_all_face_chips(&self) {
+    /// Pixel invalidation / stale marking: drop this photo's baked chips,
+    /// whatever revisions they carry. Best-effort — anything left is
+    /// unreachable by current URLs (revisioned names) and the next publish
+    /// sweeps it under the write lock.
+    pub fn delete_face_chips(&self, id: &str) {
         let Ok(entries) = std::fs::read_dir(&self.cache_dir) else {
             return;
         };
         for e in entries.filter_map(Result::ok) {
-            let name = e.file_name().to_string_lossy().into_owned();
-            // {16-hex}-f{n}.jpg
-            if let Some((stem, rest)) = name.split_once("-f") {
-                if stem.len() == 16
-                    && stem.chars().all(|c| c.is_ascii_hexdigit())
-                    && rest
-                        .strip_suffix(".jpg")
-                        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
-                {
-                    let _ = std::fs::remove_file(e.path());
-                }
+            if is_photo_chip_file(&e.file_name().to_string_lossy(), id) {
+                let _ = std::fs::remove_file(e.path());
             }
+        }
+    }
+
+    /// Delete-all-face-data cleanup: sweep every baked chip in the cache —
+    /// **including temps**, which carry the same biometric crop and would
+    /// otherwise outlive a privacy delete (a process killed inside
+    /// `publish_bytes` leaves one behind).
+    ///
+    /// Fallible on purpose. A privacy delete that could not remove a file must
+    /// not report success: the caller propagates the failure and the DB's
+    /// `chip_sweep_pending` flag keeps the work owed until a sweep that really
+    /// removed everything clears it.
+    pub fn delete_all_face_chips(&self) -> Result<usize, String> {
+        let entries = match std::fs::read_dir(&self.cache_dir) {
+            Ok(e) => e,
+            // No cache dir at all: there is nothing to delete, which is the
+            // outcome we wanted. Any OTHER read failure hides unknown files.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(e) => return Err(format!("cache dir unreadable: {e}")),
+        };
+        let mut removed = 0usize;
+        let mut failures: Vec<String> = Vec::new();
+        for entry in entries {
+            let e = match entry {
+                Ok(e) => e,
+                Err(err) => {
+                    failures.push(format!("directory entry unreadable: {err}"));
+                    continue;
+                }
+            };
+            if !is_face_chip_file(&e.file_name().to_string_lossy()) {
+                continue;
+            }
+            match std::fs::remove_file(e.path()) {
+                Ok(()) => removed += 1,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => failures.push(format!("{}: {err}", e.path().display())),
+            }
+        }
+        if failures.is_empty() {
+            Ok(removed)
+        } else {
+            Err(failures.join("; "))
         }
     }
 
@@ -206,6 +244,36 @@ impl PreviewState {
         self.inner.lock().unwrap().by_id.get(id).cloned()
     }
 
+    /// Current preview generation for a photo. **Every listed photo has a
+    /// nonzero token**; 0 means "not listed" and is deliberately a value no
+    /// snapshot can ever have held. The face worker snapshots it before
+    /// decoding and re-checks before its commit — the plan's cheap in-process
+    /// early discard, on top of (never instead of) the DB guards.
+    pub fn preview_gen(&self, id: &str) -> u64 {
+        self.inner
+            .lock()
+            .unwrap()
+            .preview_gen
+            .get(id)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// The cached preview for this photo is gone (source pixels changed, or it
+    /// left the listing): anything still being computed from it is superseded.
+    /// Tokens come from a process-global counter and are never reused, so a
+    /// stale snapshot can never compare equal to a later one — and a photo
+    /// dropped from the map reads 0, which no snapshot of a listed photo ever
+    /// was.
+    pub fn invalidate_preview(&self, id: &str) {
+        let gen = next_preview_gen();
+        self.inner
+            .lock()
+            .unwrap()
+            .preview_gen
+            .insert(id.to_string(), gen);
+    }
+
     /// Ids of the folder open right now — the cache janitor's protected set.
     pub fn current_ids(&self) -> std::collections::HashSet<String> {
         self.inner.lock().unwrap().by_id.keys().cloned().collect()
@@ -234,8 +302,24 @@ impl PreviewState {
     }
 
     pub fn set_entries(&self, entries: Vec<Arc<PhotoEntry>>) {
+        let by_id: HashMap<String, Arc<PhotoEntry>> =
+            entries.iter().map(|e| (e.id.clone(), e.clone())).collect();
         let mut inner = self.inner.lock().unwrap();
-        inner.by_id = entries.iter().map(|e| (e.id.clone(), e.clone())).collect();
+        // Photos this listing doesn't contain lose their token and read 0
+        // again — which is exactly how in-flight work for a folder we just
+        // left gets discarded. Photos that stay keep theirs, so an
+        // invalidation recorded moments ago (scan_folder invalidates before it
+        // sets entries) still kills the work it was meant to. Photos that are
+        // new to the listing get a fresh nonzero token: without one, a job
+        // snapshotting 0 for a never-invalidated photo would still read 0
+        // after the photo left, and would not discard.
+        inner.preview_gen.retain(|id, _| by_id.contains_key(id));
+        for id in by_id.keys() {
+            if !inner.preview_gen.contains_key(id) {
+                inner.preview_gen.insert(id.clone(), next_preview_gen());
+            }
+        }
+        inner.by_id = by_id;
         inner.entries = entries;
         inner.anchor = 0;
         inner.done.clear();
@@ -337,6 +421,64 @@ impl PreviewState {
     }
 }
 
+/// The chip filename scheme, shared with `facestore::publish_chips` (which
+/// computes the expected artifact set from DB rows): index and the
+/// `chip_revision` of the detection that produced the crop.
+pub(crate) fn face_chip_name(id: &str, n: i64, revision: i64) -> String {
+    format!("{id}-f{n}r{revision}.jpg")
+}
+
+/// `{16-hex}-f{n}r{rev}.jpg` (a published chip), the pre-revision legacy shape
+/// `{16-hex}-f{n}.jpg`, or either with a `.tmp{pid}-{seq}` extension (staged
+/// by a writer that died mid-publish). Nothing else in the cache dir matches:
+/// sibling artifacts are `-t`, `-h`, `-m`, `-raf`.
+fn is_face_chip_file(name: &str) -> bool {
+    let Some((id, rest)) = name.split_once("-f") else {
+        return false;
+    };
+    if id.len() != 16 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+        return false;
+    }
+    chip_suffix_shape(rest)
+}
+
+/// Same shape test scoped to ONE photo (`{photo_id}-f…`), for per-photo
+/// cleanup and the publish-time stale sweep. Unlike `is_face_chip_file` it
+/// takes the id as given, so tests with short ids behave like production.
+pub(crate) fn is_photo_chip_file(name: &str, photo_id: &str) -> bool {
+    name.strip_prefix(photo_id)
+        .and_then(|rest| rest.strip_prefix("-f"))
+        .is_some_and(chip_suffix_shape)
+}
+
+/// `<digits>[r<digits>].jpg` or the same with a `tmp…` extension.
+fn chip_suffix_shape(rest: &str) -> bool {
+    let Some((stem, ext)) = rest.split_once('.') else {
+        return false;
+    };
+    let (index, revision) = match stem.split_once('r') {
+        Some((i, rev)) => (i, Some(rev)),
+        None => (stem, None),
+    };
+    if index.is_empty() || !index.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    if let Some(rev) = revision {
+        if rev.is_empty() || !rev.chars().all(|c| c.is_ascii_digit()) {
+            return false;
+        }
+    }
+    ext == "jpg" || ext.starts_with("tmp")
+}
+
+/// Process-global, never reused: two different states of a photo's preview can
+/// never share a token, in either direction.
+fn next_preview_gen() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_GEN: AtomicU64 = AtomicU64::new(1);
+    NEXT_GEN.fetch_add(1, Ordering::Relaxed)
+}
+
 /// Unique temp path per write: concurrent workers deriving the same artifact
 /// (e.g. two thumb requests racing) must never interleave into one temp file.
 fn unique_tmp(out: &Path) -> PathBuf {
@@ -380,18 +522,40 @@ fn write_thumb(preview: &RgbImage, out: &Path) -> std::io::Result<()> {
     write_jpeg(&small, out, THUMB_QUALITY)
 }
 
-/// Atomic-ish JPEG publish (unique temp + rename) — shared by thumbs and
-/// face chips so concurrent writers can never interleave into one file.
-pub(crate) fn write_jpeg(img: &RgbImage, out: &Path, quality: u8) -> std::io::Result<()> {
+/// Encode a JPEG **into memory**. Face chips are biometric data: they are
+/// encoded here and stay in RAM until `facestore::publish_chips` has taken the
+/// DB write lock and re-checked that a privacy delete hasn't happened, so
+/// there is never a moment where a chip exists on disk unaccounted for.
+pub(crate) fn encode_jpeg(img: &RgbImage, quality: u8) -> std::io::Result<Vec<u8>> {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, quality);
+    enc.encode_image(img).map_err(std::io::Error::other)?;
+    Ok(buf)
+}
+
+/// Publish already-encoded bytes: unique temp beside the destination, then
+/// rename, so concurrent writers can never interleave into one file and a
+/// truncated write can never be mistaken for a finished artifact. The temp is
+/// removed on EVERY failure path — a write that dies half-done (full disk)
+/// must not leave a partial temp behind, least of all a face-chip one.
+pub(crate) fn publish_bytes(out: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let tmp = unique_tmp(out);
-    {
-        let file = std::fs::File::create(&tmp)?;
-        let mut wtr = std::io::BufWriter::new(file);
-        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut wtr, quality);
-        enc.encode_image(img).map_err(std::io::Error::other)?;
+    if let Err(e) = std::fs::write(&tmp, bytes) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
     }
-    std::fs::rename(&tmp, out)?;
-    Ok(())
+    match std::fs::rename(&tmp, out) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
+/// Atomic-ish JPEG publish — thumbs and any other derived image.
+pub(crate) fn write_jpeg(img: &RgbImage, out: &Path, quality: u8) -> std::io::Result<()> {
+    publish_bytes(out, &encode_jpeg(img, quality)?)
 }
 
 pub(crate) fn resize_rgb(src: &RgbImage, dw: u32, dh: u32) -> Result<RgbImage, String> {
@@ -453,5 +617,155 @@ pub fn spawn_workers(state: Arc<PreviewState>, store: Arc<crate::store::Store>, 
                 state.finish_job(&entry.id, ok);
             })
             .expect("spawn preview worker");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(id: &str) -> Arc<PhotoEntry> {
+        Arc::new(PhotoEntry {
+            id: id.into(),
+            dir: "/tmp/pv".into(),
+            stem: id.to_uppercase(),
+            jpeg: Some(format!("/tmp/pv/{id}.JPG").into()),
+            raf: None,
+            mtime: 1,
+            size: 1,
+        })
+    }
+
+    fn state() -> (PreviewState, PathBuf) {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "emberpv-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        (
+            PreviewState::new(dir.clone(), crate::exposure::BlinkiesCfg::default()),
+            dir,
+        )
+    }
+
+    /// The face worker's early-discard token: a photo whose preview was
+    /// invalidated mid-inference must not compare equal to its snapshot.
+    #[test]
+    fn preview_generations_move_only_on_invalidation() {
+        let (s, dir) = state();
+        s.set_entries(vec![entry("a"), entry("b")]);
+        let snapshot = s.preview_gen("a");
+        assert_ne!(snapshot, 0, "a listed photo always has a real token");
+        s.invalidate_preview("a");
+        assert_ne!(
+            s.preview_gen("a"),
+            snapshot,
+            "work from the old pixels dies"
+        );
+        let b_before = s.preview_gen("b");
+        assert_ne!(b_before, 0);
+        assert_eq!(s.preview_gen("b"), b_before, "other photos unaffected");
+
+        // Re-listing the same folder (scan_folder invalidates, THEN sets
+        // entries) must not lose the invalidation that just happened.
+        let after_invalidate = s.preview_gen("a");
+        s.set_entries(vec![entry("a"), entry("b")]);
+        assert_eq!(s.preview_gen("a"), after_invalidate);
+
+        // A photo that leaves the listing is forgotten — and because
+        // generations are never reused, its old value can't come back as a
+        // false match if it returns.
+        s.set_entries(vec![entry("b")]);
+        assert_eq!(s.preview_gen("a"), 0);
+        s.set_entries(vec![entry("a"), entry("b")]);
+        assert_ne!(
+            s.preview_gen("a"),
+            after_invalidate,
+            "a fresh token on return"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The zero-value collision the follow-up review found: a photo that was
+    /// NEVER invalidated is snapshotted while the folder is open, then the
+    /// user opens another folder. Its bookkeeping is dropped — and if "absent"
+    /// and "never invalidated" both read 0, the in-flight job compares equal
+    /// and commits work about a folder that is gone.
+    #[test]
+    fn leaving_a_folder_discards_a_never_invalidated_photos_work() {
+        let (s, dir) = state();
+        s.set_entries(vec![entry("a"), entry("b")]);
+        let snapshot = s.preview_gen("a"); // the worker's pre-inference read
+        s.set_entries(vec![entry("c")]); // …the user opens another folder
+        assert_ne!(
+            s.preview_gen("a"),
+            snapshot,
+            "the in-flight job must not find its own token"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A privacy delete may not report success while biometric files remain,
+    /// so the sweep is fallible. A directory sitting where a chip file should
+    /// be makes `remove_file` fail on every platform and as any user.
+    #[test]
+    fn a_chip_that_cannot_be_removed_fails_the_sweep() {
+        let (s, dir) = state();
+        let id = "00deadbeef00cafe";
+        std::fs::write(dir.join(format!("{id}-f0.jpg")), b"chip").unwrap();
+        std::fs::create_dir(dir.join(format!("{id}-f1.jpg"))).unwrap();
+        let err = s.delete_all_face_chips().expect_err("removal must fail");
+        assert!(err.contains("-f1.jpg"), "the failure names the file: {err}");
+        assert!(
+            !dir.join(format!("{id}-f0.jpg")).exists(),
+            "the removable chips still go"
+        );
+        // With the obstruction gone the sweep succeeds and reports the count.
+        std::fs::remove_dir(dir.join(format!("{id}-f1.jpg"))).unwrap();
+        std::fs::write(dir.join(format!("{id}-f2.tmp1-1")), b"temp").unwrap();
+        assert_eq!(s.delete_all_face_chips().unwrap(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn face_chip_files_are_recognized_by_shape() {
+        let id = "00deadbeef00cafe";
+        assert!(
+            is_face_chip_file(&face_chip_name(id, 0, 3)),
+            "the current revisioned shape"
+        );
+        assert!(is_face_chip_file(&format!("{id}-f12r400.jpg")));
+        assert!(
+            is_face_chip_file(&format!("{id}-f0.jpg")),
+            "the pre-revision legacy shape must still be swept on upgrade"
+        );
+        for tmp in [format!("{id}-f3.tmp1234-9"), format!("{id}-f3r7.tmp1234-9")] {
+            assert!(
+                is_face_chip_file(&tmp),
+                "a staged temp holds the same crop and must be swept too: {tmp}"
+            );
+        }
+        for other in [
+            format!("{id}.jpg"),
+            format!("{id}-t.jpg"),
+            format!("{id}-h.json"),
+            format!("{id}-m.png"),
+            format!("{id}-raf.jpg"),
+            format!("{id}-f.jpg"),
+            format!("{id}-fx.jpg"),
+            format!("{id}-f0r.jpg"),
+            format!("{id}-f0rx.jpg"),
+            "blinkies.fingerprint".to_string(),
+        ] {
+            assert!(!is_face_chip_file(&other), "{other} is not a chip");
+        }
+        // The per-photo variant scopes the same shape to one id.
+        assert!(is_photo_chip_file(&face_chip_name(id, 1, 9), id));
+        assert!(is_photo_chip_file(&format!("{id}-f1.jpg"), id));
+        assert!(!is_photo_chip_file(&face_chip_name(id, 1, 9), "otherid"));
+        assert!(!is_photo_chip_file(&format!("{id}-t.jpg"), id));
     }
 }
