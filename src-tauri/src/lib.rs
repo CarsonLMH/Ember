@@ -1080,6 +1080,21 @@ fn delete_face_data(state: tauri::State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Throw away recognition's guesses in this folder, keeping every label the
+/// user made. The sweep re-derives them under current settings.
+#[tauri::command]
+fn clear_auto_assignments(
+    state: tauri::State<'_, AppState>,
+    folder_id: i64,
+) -> Result<usize, String> {
+    let n = state
+        .store
+        .clear_auto_assignments(folder_id)
+        .map_err(|e| e.to_string())?;
+    faces::request_sweep();
+    Ok(n)
+}
+
 /// UI-only declutter: hidden people leave the panel list and the `Shift+p`
 /// switcher but keep their labels and stay recognized.
 #[tauri::command]
@@ -1298,6 +1313,7 @@ pub fn run() {
             rescan_faces,
             delete_person,
             set_person_hidden,
+            clear_auto_assignments,
             quit_app,
             frontend_log
         ])

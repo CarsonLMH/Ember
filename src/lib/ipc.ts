@@ -338,6 +338,11 @@ export function deletePerson(personId: number): Promise<number> {
   return invoke<number>('delete_person', { personId });
 }
 
+/** Drop every machine guess in the folder; user labels and "not X" survive. */
+export function clearAutoAssignments(folderId: number): Promise<number> {
+  return invoke<number>('clear_auto_assignments', { folderId });
+}
+
 /** Declutter only: hidden people leave the list and the switcher, but keep
  * their labels and stay recognized. */
 export function setPersonHidden(personId: number, hidden: boolean): Promise<void> {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  clearAutoAssignments,
   deleteFaceData,
   faceCalibrationReport,
   faceChipUrl,
@@ -340,6 +341,16 @@ export default function PeoplePanel({
     try {
       const n = await rescanFaces(folderId);
       notify(`Re-detecting faces in ${n} photos — names are kept`);
+    } catch (e) {
+      notify(String(e));
+    }
+    reload();
+  };
+
+  const clearAuto = async () => {
+    try {
+      const n = await clearAutoAssignments(folderId);
+      notify(`Cleared ${n} auto-labels — your own labels are untouched`);
     } catch (e) {
       notify(String(e));
     }
@@ -715,6 +726,13 @@ export default function PeoplePanel({
                   onClick={() => void rescan()}
                 >
                   rescan faces
+                </button>
+                <button
+                  className="people-dim"
+                  title="Undo everything recognition guessed in this folder, keeping the labels you made yourself"
+                  onClick={() => void clearAuto()}
+                >
+                  clear auto-labels
                 </button>
                 <button
                   className="people-dim"

@@ -423,6 +423,27 @@ pub fn match_face(
     Some((person, score))
 }
 
+/// One person cannot be two faces in the same photo. Given candidate
+/// (face, person, score) triples for a single photo, keep only the
+/// best-scoring face per person — and drop any candidate for a person the
+/// photo already has (a carried or user assignment always wins).
+/// Input order is preserved for the survivors.
+pub fn one_face_per_person(
+    mut candidates: Vec<(usize, i64, f32)>,
+    already_present: &std::collections::HashSet<i64>,
+) -> Vec<(usize, i64, f32)> {
+    candidates.retain(|(_, person, _)| !already_present.contains(person));
+    // Strongest first, then take the first occurrence of each person.
+    candidates.sort_by(|a, b| b.2.total_cmp(&a.2));
+    let mut seen = std::collections::HashSet::new();
+    let mut kept: Vec<(usize, i64, f32)> = candidates
+        .into_iter()
+        .filter(|(_, person, _)| seen.insert(*person))
+        .collect();
+    kept.sort_by_key(|(idx, _, _)| *idx);
+    kept
+}
+
 // ---------- carry-over correspondence (rescan / model change) ----------
 
 /// Confident-match thresholds for transferring user state old→new rows.
@@ -810,6 +831,19 @@ mod tests {
         let rej1: std::collections::HashSet<i64> = [1].into();
         let got = match_face(&e(1.0, 0.0), &protos, &rej1, 0.40, 0.05);
         assert!(got.is_none() || got.unwrap().0 != 1, "\"not X\" is final");
+    }
+
+    #[test]
+    fn one_face_per_person_keeps_the_best_and_respects_existing() {
+        let none = std::collections::HashSet::new();
+        // Person 1 proposed on faces 0 and 2 → only the stronger survives.
+        let kept = one_face_per_person(vec![(0, 1, 0.6), (1, 2, 0.9), (2, 1, 0.8)], &none);
+        assert_eq!(kept, vec![(1, 2, 0.9), (2, 1, 0.8)]);
+        // A person already on another face in this photo is not proposed again.
+        let present: std::collections::HashSet<i64> = [2].into();
+        let kept = one_face_per_person(vec![(0, 1, 0.6), (1, 2, 0.9)], &present);
+        assert_eq!(kept, vec![(0, 1, 0.6)]);
+        assert!(one_face_per_person(vec![], &none).is_empty());
     }
 
     #[test]

@@ -616,41 +616,42 @@ fn process_photo(
     let plan = facestore::plan_carry_over(&snap, &new);
     let protos = facestore::person_prototypes(conn, gen, 5).map_err(|e| e.to_string())?;
     let empty = std::collections::HashSet::new();
-    let proposals: Vec<Option<(i64, f32)>> = new
+    let raw: Vec<(usize, i64, f32)> = new
         .iter()
         .enumerate()
-        .map(|(i, f)| {
+        .filter_map(|(i, f)| {
             if protos.is_empty() {
                 return None;
             }
             let carried = plan.get(&i).map(|&oi| &snap.old[oi]);
-            match carried {
-                Some(c) if c.person_id.is_some() || c.ignored => None,
-                other => {
-                    let rejected: &std::collections::HashSet<i64> = match other {
-                        Some(c) if !c.rejections.is_empty() => {
-                            // Transferred "not X" excludes X here too.
-                            return facedet::match_face(
-                                &f.embedding,
-                                &protos,
-                                &c.rejections.iter().copied().collect(),
-                                cfg.auto_assign_threshold,
-                                cfg.auto_assign_margin,
-                            );
-                        }
-                        _ => &empty,
-                    };
-                    facedet::match_face(
-                        &f.embedding,
-                        &protos,
-                        rejected,
-                        cfg.auto_assign_threshold,
-                        cfg.auto_assign_margin,
-                    )
-                }
+            // Carried assignments and ignored flags are not ours to overwrite.
+            if carried.is_some_and(|c| c.person_id.is_some() || c.ignored) {
+                return None;
             }
+            // Transferred "not X" excludes X here too.
+            let rejected: std::collections::HashSet<i64> = carried
+                .map(|c| c.rejections.iter().copied().collect())
+                .unwrap_or_else(|| empty.clone());
+            facedet::match_face(
+                &f.embedding,
+                &protos,
+                &rejected,
+                cfg.auto_assign_threshold,
+                cfg.auto_assign_margin,
+            )
+            .map(|(pid, score)| (i, pid, score))
         })
         .collect();
+    // One person cannot be two faces in one photo: carried assignments hold
+    // their person, and among the remaining proposals the strongest wins.
+    let present: std::collections::HashSet<i64> = plan
+        .values()
+        .filter_map(|&oi| snap.old[oi].person_id)
+        .collect();
+    let mut proposals: Vec<Option<(i64, f32)>> = vec![None; new.len()];
+    for (i, pid, score) in facedet::one_face_per_person(raw, &present) {
+        proposals[i] = Some((pid, score));
+    }
 
     let outcome = facestore::commit_scan(conn, id, &snap, &new, &proposals, mtime, size)
         .map_err(|e| e.to_string())?;

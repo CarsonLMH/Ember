@@ -514,16 +514,33 @@ pub fn sweep_photo(
             .collect::<Result<_, _>>()?;
         v
     };
+    // Persons already on another face of this photo — one person cannot be
+    // two faces in the same picture.
+    let present: std::collections::HashSet<i64> = {
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT person_id FROM faces
+             WHERE photo_id = ?1 AND person_id IS NOT NULL AND ignored = 0",
+        )?;
+        let v: std::collections::HashSet<i64> = stmt
+            .query_map(params![photo_id], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
+        v
+    };
     // Comparisons outside any lock.
     let empty = std::collections::HashSet::new();
-    let matches: Vec<(i64, i64, f32)> = faces
+    let candidates: Vec<(usize, i64, f32)> = faces
         .iter()
-        .filter_map(|(fid, blob)| {
+        .enumerate()
+        .filter_map(|(i, (fid, blob))| {
             let emb = facedet::blob_to_embedding(blob)?;
             let rejected = rejections.get(fid).unwrap_or(&empty);
             facedet::match_face(&emb, protos, rejected, threshold, margin)
-                .map(|(pid, score)| (*fid, pid, score))
+                .map(|(pid, score)| (i, pid, score))
         })
+        .collect();
+    let matches: Vec<(i64, i64, f32)> = facedet::one_face_per_person(candidates, &present)
+        .into_iter()
+        .map(|(i, pid, score)| (faces[i].0, pid, score))
         .collect();
     if matches.is_empty() {
         return Ok(0);
@@ -1388,6 +1405,36 @@ impl Store {
             params![photo_id],
         )?;
         Ok(count.unwrap_or(0))
+    }
+
+    /// Throw away every machine guess in this folder, keeping user labels.
+    /// The recovery path when recognition has made a mess (bad detection
+    /// settings, a poisoned exemplar): the sweep re-derives from scratch
+    /// under current settings. Rejections survive — "not X" is user intent.
+    pub fn clear_auto_assignments(&self, folder_id: i64) -> rusqlite::Result<usize> {
+        let mut conn = self.lock_conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let photos: Vec<String> = {
+            let mut stmt = tx.prepare(
+                "SELECT DISTINCT f.photo_id FROM faces f JOIN photos p ON p.id = f.photo_id
+                 WHERE p.folder_id = ?1 AND f.assigned_by = 'auto'",
+            )?;
+            let v: Vec<String> = stmt
+                .query_map(params![folder_id], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            v
+        };
+        let cleared = tx.execute(
+            "UPDATE faces SET person_id = NULL, assigned_by = NULL, similarity = NULL
+             WHERE assigned_by = 'auto' AND photo_id IN
+               (SELECT id FROM photos WHERE folder_id = ?1)",
+            params![folder_id],
+        )?;
+        for pid in &photos {
+            bump_revision(&tx, pid)?;
+        }
+        tx.commit()?;
+        Ok(cleared)
     }
 
     /// Hide a person from the People list and the filter switcher. UI-only:
