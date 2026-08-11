@@ -118,11 +118,14 @@ filter the folder to a person.
   Person filter (`Shift+p`) AND-combines with stars/recipe/tag.
 - **Auto-recognition** is calibrated on real photos before it ships
   (thresholds in settings.toml `[faces]`, measured 2026-08: assign at 0.45
-  with a 0.08 margin, detect at 0.5); prototypes come from user-confirmed
+  with a 0.08 margin, detect at 0.8); prototypes come from user-confirmed
   faces only — outliers excluded — with a margin test, so one mistake cannot
   cascade. Corrections are absolute: "not X" bars X from every automatic
   path, and naming X retracts it.
 - **Privacy**: "Delete all face data" wipes embeddings, names and chips AND
   durably disables indexing (survives relaunch and concurrent processes);
-  re-enabling is an explicit act that starts from scratch. Everything is
+  re-enabling is an explicit act that starts from scratch. It fails closed:
+  if the settings file can't be updated the database keeps indexing off, and
+  if a face image file can't be removed the command says so instead of
+  reporting success — the removal is retried at the next launch. Everything is
   local; nothing ever leaves the machine.
