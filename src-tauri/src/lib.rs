@@ -1163,9 +1163,11 @@ fn rescan_faces(state: tauri::State<'_, AppState>, folder_id: i64) -> Result<usi
         .store
         .rescan_faces(folder_id)
         .map_err(|e| e.to_string())?;
-    for photo_id in &rows {
-        state.preview.delete_face_chips(photo_id);
-    }
+    // One directory pass for the whole folder — a per-photo pass made this
+    // command (and the button that awaits it) lag by seconds.
+    state
+        .preview
+        .delete_face_chips_many(&rows.iter().cloned().collect());
     // A stale photo's faces leave the prototype pool until it is re-scanned
     // (the compatibility rule), so the newly detected faces of the first
     // photos back have little to match against. One sweep once the queue

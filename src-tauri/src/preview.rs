@@ -92,19 +92,42 @@ impl PreviewState {
         self.cache_dir.join(face_chip_name(id, n, revision))
     }
 
-    /// Pixel invalidation / stale marking: drop this photo's baked chips,
+    /// Pixel invalidation / stale marking: drop one photo's baked chips,
     /// whatever revisions they carry. Best-effort — anything left is
     /// unreachable by current URLs (revisioned names) and the next publish
     /// sweeps it under the write lock.
     pub fn delete_face_chips(&self, id: &str) {
+        self.delete_face_chips_many(&HashSet::from([id.to_string()]));
+    }
+
+    /// The same sweep for a whole set of photos in ONE directory pass —
+    /// `rescan_faces` calls this for every photo in the folder, and a
+    /// per-photo `read_dir` made the button visibly lag (535 photos × a
+    /// few-thousand-entry cache dir, synchronously inside the command).
+    /// Returns how many files were removed.
+    pub fn delete_face_chips_many(&self, ids: &HashSet<String>) -> usize {
+        if ids.is_empty() {
+            return 0;
+        }
         let Ok(entries) = std::fs::read_dir(&self.cache_dir) else {
-            return;
+            return 0;
         };
+        let mut removed = 0;
         for e in entries.filter_map(Result::ok) {
-            if is_photo_chip_file(&e.file_name().to_string_lossy(), id) {
-                let _ = std::fs::remove_file(e.path());
+            let name = e.file_name().to_string_lossy().into_owned();
+            // Ids never contain '-', so the text before the first "-f" is the
+            // candidate photo id; the full shape check then confirms.
+            let Some((prefix, _)) = name.split_once("-f") else {
+                continue;
+            };
+            if ids.contains(prefix)
+                && is_photo_chip_file(&name, prefix)
+                && std::fs::remove_file(e.path()).is_ok()
+            {
+                removed += 1;
             }
         }
+        removed
     }
 
     /// Delete-all-face-data cleanup: sweep every baked chip in the cache —
@@ -727,6 +750,38 @@ mod tests {
         std::fs::remove_dir(dir.join(format!("{id}-f1.jpg"))).unwrap();
         std::fs::write(dir.join(format!("{id}-f2.tmp1-1")), b"temp").unwrap();
         assert_eq!(s.delete_all_face_chips().unwrap(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// One directory pass removes the chips of every requested photo — and
+    /// only those: other photos' chips and non-chip artifacts stay.
+    #[test]
+    fn deleting_many_photos_chips_is_one_pass_and_touches_only_theirs() {
+        let (s, dir) = state();
+        let (a, b, c) = ("00deadbeef00cafe", "11deadbeef00cafe", "22deadbeef00cafe");
+        for (id, n, rev) in [(a, 0, 3), (a, 1, 3), (b, 0, 7), (c, 0, 9)] {
+            std::fs::write(dir.join(face_chip_name(id, n, rev)), b"chip").unwrap();
+        }
+        std::fs::write(dir.join(format!("{a}-f5.jpg")), b"legacy chip").unwrap();
+        std::fs::write(dir.join(format!("{a}-t.jpg")), b"thumb").unwrap();
+
+        let ids: HashSet<String> = [a.to_string(), b.to_string()].into();
+        assert_eq!(
+            s.delete_face_chips_many(&ids),
+            4,
+            "a's 3 (incl. legacy) + b's 1"
+        );
+        assert!(!dir.join(face_chip_name(a, 0, 3)).exists());
+        assert!(
+            !dir.join(format!("{a}-f5.jpg")).exists(),
+            "legacy shape swept"
+        );
+        assert!(!dir.join(face_chip_name(b, 0, 7)).exists());
+        assert!(
+            dir.join(face_chip_name(c, 0, 9)).exists(),
+            "unlisted photo untouched"
+        );
+        assert!(dir.join(format!("{a}-t.jpg")).exists(), "thumbs untouched");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
