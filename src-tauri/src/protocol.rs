@@ -92,6 +92,29 @@ fn handle(state: &PreviewState, repair: &ChipRepair, path: &str) -> Response<Vec
     }
 }
 
+/// Fixed worker pool: bounds read concurrency and keeps disk reads off
+/// WebKit's scheme-handler callback thread.
+pub fn spawn_workers(
+    state: Arc<PreviewState>,
+    repair: Arc<ChipRepair>,
+    rx: Receiver<Job>,
+    n: usize,
+) {
+    for i in 0..n {
+        let state = state.clone();
+        let repair = repair.clone();
+        let rx = rx.clone();
+        std::thread::Builder::new()
+            .name(format!("photo-proto-{i}"))
+            .spawn(move || {
+                while let Ok(job) = rx.recv() {
+                    job.responder.respond(handle(&state, &repair, &job.path));
+                }
+            })
+            .expect("spawn protocol worker");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,14 +124,15 @@ mod tests {
         Arc<ChipRepair>,
         crossbeam_channel::Receiver<String>,
     ) {
+        // Per-process counter, not a timestamp: parallel tests landing in the
+        // same microsecond would share a directory.
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
             "emberproto-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .subsec_nanos()
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let state = PreviewState::new(dir, crate::exposure::BlinkiesCfg::default());
         let (repair, rx) = crate::faces::test_repair();
@@ -163,28 +187,5 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let resp = handle(&state, &repair, "/preview/zz");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-    }
-}
-
-/// Fixed worker pool: bounds read concurrency and keeps disk reads off
-/// WebKit's scheme-handler callback thread.
-pub fn spawn_workers(
-    state: Arc<PreviewState>,
-    repair: Arc<ChipRepair>,
-    rx: Receiver<Job>,
-    n: usize,
-) {
-    for i in 0..n {
-        let state = state.clone();
-        let repair = repair.clone();
-        let rx = rx.clone();
-        std::thread::Builder::new()
-            .name(format!("photo-proto-{i}"))
-            .spawn(move || {
-                while let Ok(job) = rx.recv() {
-                    job.responder.respond(handle(&state, &repair, &job.path));
-                }
-            })
-            .expect("spawn protocol worker");
     }
 }

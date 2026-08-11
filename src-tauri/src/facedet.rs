@@ -648,7 +648,7 @@ mod tests {
         assert!((t[2 * plane] - 100.0).abs() < 1e-3, "R at (0,0)");
         // Padding beyond the placed image is zero.
         assert_eq!(t[200 * YUNET_INPUT + 400], 0.0);
-        assert_eq!(t[0 * YUNET_INPUT + 321], 0.0);
+        assert_eq!(t[321], 0.0, "row 0, past the placed image");
     }
 
     #[test]
