@@ -59,6 +59,18 @@ privacy semantics are all as specified.
   from Slice D into the working panel** as soon as a museum folder produced
   statue and photographed-photo clusters.
 
+## Behavior a reviewer will flag as off-plan (don't "fix" it)
+
+- **Culling keys stay LIVE while the People panel is open.** The plan said the
+  panel should join `overlayOpenRef` and swallow background keys; the owner
+  decided otherwise at Slice A acceptance: the panel is a dock beside the
+  viewer, like the trash panel, and the whole point is naming faces *while
+  culling* — arrows, ratings and trash keep working, panel inputs own their
+  own keys, Escape closes. A review round "fixed" this to plan (a
+  `panelOpenRef` gate that ate every hotkey) and the owner reported it as a
+  bug the same day (2026-08-11) — it was reverted. Only the full-screen
+  pickers/palettes (recipes, tags, person switcher) own the keyboard.
+
 ## Removed
 
 - **`set_person_hidden` (hide a person).** Built in Slice D, then cut at the
