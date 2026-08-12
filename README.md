@@ -7,7 +7,8 @@ fuzzy film-recipe matching, and on-device face recognition (People panel on
 `p` — local-only, deletable, never written to your files). Single-user,
 local-only, keyboard-first.
 
-**SPEC.md** is the product spec; **CLAUDE.md** has the working conventions.
+**SPEC.md** is the product spec. **AGENTS.md** contains shared agent working
+conventions; **CLAUDE.md** imports it and adds Claude Code-specific guidance.
 
 ## Setup (one-time)
 
