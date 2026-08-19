@@ -21,7 +21,8 @@ use crate::store::Store;
 const STARTUP_DELAY_SECS: u64 = 120;
 
 /// One photo's cache artifacts: {id}.jpg, {id}-t.jpg, {id}-h.json,
-/// {id}-m.png, {id}-raf.jpg, {id}-f{n}.jpg — grouped by the 16-hex id prefix.
+/// {id}-m.png, {id}-raf.jpg, {id}-f{n}r{rev}.jpg — grouped by the 16-hex id
+/// prefix (chip names carry the scan revision; grouping ignores the suffix).
 struct Group {
     id: String,
     files: Vec<PathBuf>,

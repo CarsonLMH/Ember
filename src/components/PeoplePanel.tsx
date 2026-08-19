@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   clearAutoAssignments,
   deleteFaceData,
+  deletePerson,
   faceCalibrationReport,
   faceChipUrl,
   faceClusters,
@@ -155,6 +156,7 @@ export default function PeoplePanel({
   } | null>(null);
   const [undoToast, setUndoToast] = useState<UndoToast | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmDeletePerson, setConfirmDeletePerson] = useState<number | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // `notify` is a fresh closure on every App render; a ref keeps `load`
@@ -359,6 +361,18 @@ export default function PeoplePanel({
     reload();
   };
 
+  const deletePersonRow = async (person: PersonOut) => {
+    setConfirmDeletePerson(null);
+    try {
+      const n = await deletePerson(person.id);
+      notify(`Deleted “${person.name}” — ${n} faces returned to Unnamed`);
+      setExpanded(null);
+    } catch (e) {
+      notify(String(e));
+    }
+    reload();
+  };
+
   const notPerson = async (face: ChipRef, person: PersonOut) => {
     try {
       await faceReject(face.faceId, person.id);
@@ -403,7 +417,7 @@ export default function PeoplePanel({
   const clearAuto = async () => {
     try {
       const n = await clearAutoAssignments(folderId);
-      notify(`Cleared ${n} auto-labels — your own labels are untouched`);
+      notify(`Re-guessing ${n} auto-labels from your confirmed faces — your own labels are untouched`);
     } catch (e) {
       notify(String(e));
     }
@@ -544,7 +558,33 @@ export default function PeoplePanel({
                           </span>
                         ))}
                       </div>
-                      <div className="people-hint">double-click the name to rename</div>
+                      {confirmDeletePerson === p.id ? (
+                        <div className="people-confirm">
+                          <span>
+                            Delete “{p.name}” everywhere? Their faces return to Unnamed —
+                            this can’t be undone.
+                          </span>
+                          <span className="people-toast-btns">
+                            <button
+                              className="people-danger"
+                              onClick={() => void deletePersonRow(p)}
+                            >
+                              Delete
+                            </button>
+                            <button onClick={() => setConfirmDeletePerson(null)}>Keep</button>
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="people-hint">
+                          double-click the name to rename ·{' '}
+                          <button
+                            className="people-link"
+                            onClick={() => setConfirmDeletePerson(p.id)}
+                          >
+                            delete person…
+                          </button>
+                        </div>
+                      )}
                     </>
                   )}
                 </li>
@@ -755,10 +795,10 @@ export default function PeoplePanel({
                 </button>
                 <button
                   className="people-dim"
-                  title="Undo everything recognition guessed in this folder, keeping the labels you made yourself"
+                  title="Drop every auto-label in this folder and re-guess from your confirmed faces — labels you made yourself are untouched"
                   onClick={() => void clearAuto()}
                 >
-                  clear auto-labels
+                  re-run recognition
                 </button>
                 <button
                   className="people-dim"
