@@ -89,6 +89,9 @@ pub struct XmpJob {
     pub raf: Option<String>,
     pub rating: u8,
     pub tags: Option<Vec<String>>,
+    /// Monotonic enqueue token — completion/error report against exactly
+    /// this job, so a re-edit that replaced the row is never affected.
+    pub job_seq: i64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -134,6 +137,11 @@ fn add_column_if_absent(
     }
     Ok(())
 }
+
+/// The schema version a fully-migrated DB carries (`PRAGMA user_version`).
+/// The final migration stage stamps this; tests assert against it so a new
+/// stage can't silently leave them expecting the old number.
+pub(crate) const SCHEMA_VERSION: i64 = 7;
 
 impl Store {
     pub fn new(path: &Path) -> rusqlite::Result<Self> {
@@ -259,6 +267,21 @@ impl Store {
                 "INTEGER NOT NULL DEFAULT 0",
             )?;
             conn.pragma_update(None, "user_version", 6)?;
+        }
+        // v7: per-job completion token (docs/reviews/faces/REVIEW_ROUND4.md §6).
+        // xmp_done's compare-and-delete keyed on (photo_id, rating) let a
+        // tags-only re-edit at the same rating be deleted by the OLDER job's
+        // completion — its file write silently lost. Every enqueue now draws a
+        // monotonic job_seq from the one-row xmp_seq counter (bumped inside
+        // the same transaction); completion and error report against the exact
+        // job they ran. Pre-existing rows keep job_seq 0 and drain normally.
+        if version < 7 {
+            add_column_if_absent(&conn, "xmp_queue", "job_seq", "INTEGER NOT NULL DEFAULT 0")?;
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS xmp_seq (id INTEGER PRIMARY KEY CHECK (id = 1), seq INTEGER NOT NULL);
+                 INSERT OR IGNORE INTO xmp_seq (id, seq) VALUES (1, 0);",
+            )?;
+            conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
         // Idempotent guard, every open: a DB stamped v6 before the counter
         // existed (the round-4 working-tree build) skipped the seeding above,
@@ -453,11 +476,13 @@ impl Store {
                 format!(r#"{{"from":{from},"to":{to}}}"#)
             ],
         )?;
+        tx.execute("UPDATE xmp_seq SET seq = seq + 1", [])?;
         tx.execute(
-            "INSERT INTO xmp_queue (photo_id, jpeg_path, raf_path, rating)
-             VALUES (?1, ?2, ?3, ?4)
+            "INSERT INTO xmp_queue (photo_id, jpeg_path, raf_path, rating, job_seq)
+             VALUES (?1, ?2, ?3, ?4, (SELECT seq FROM xmp_seq))
              ON CONFLICT(photo_id) DO UPDATE SET
-               rating = excluded.rating, status = 'pending', attempts = 0, last_error = NULL",
+               rating = excluded.rating, job_seq = excluded.job_seq,
+               status = 'pending', attempts = 0, last_error = NULL",
             params![photo_id, jpeg, raf, to],
         )?;
         tx.commit()?;
@@ -503,11 +528,13 @@ impl Store {
                 serde_json::json!({ "from": from, "to": to }).to_string()
             ],
         )?;
+        tx.execute("UPDATE xmp_seq SET seq = seq + 1", [])?;
         tx.execute(
-            "INSERT INTO xmp_queue (photo_id, jpeg_path, raf_path, rating, tags)
-             VALUES (?1, ?2, ?3, ?4, ?5)
+            "INSERT INTO xmp_queue (photo_id, jpeg_path, raf_path, rating, tags, job_seq)
+             VALUES (?1, ?2, ?3, ?4, ?5, (SELECT seq FROM xmp_seq))
              ON CONFLICT(photo_id) DO UPDATE SET
-               tags = excluded.tags, status = 'pending', attempts = 0, last_error = NULL",
+               tags = excluded.tags, job_seq = excluded.job_seq,
+               status = 'pending', attempts = 0, last_error = NULL",
             params![photo_id, jpeg, raf, rating, to_json],
         )?;
         tx.commit()?;
@@ -738,11 +765,13 @@ impl Store {
                 params![photo_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
+            tx.execute("UPDATE xmp_seq SET seq = seq + 1", [])?;
             tx.execute(
-                "INSERT INTO xmp_queue (photo_id, jpeg_path, raf_path, rating)
-                 VALUES (?1, ?2, ?3, ?4)
+                "INSERT INTO xmp_queue (photo_id, jpeg_path, raf_path, rating, job_seq)
+                 VALUES (?1, ?2, ?3, ?4, (SELECT seq FROM xmp_seq))
                  ON CONFLICT(photo_id) DO UPDATE SET
-                   rating = excluded.rating, status = 'pending', attempts = 0, last_error = NULL",
+                   rating = excluded.rating, job_seq = excluded.job_seq,
+                   status = 'pending', attempts = 0, last_error = NULL",
                 params![photo_id, jpeg, raf, r],
             )?;
         }
@@ -757,11 +786,13 @@ impl Store {
                 params![photo_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )?;
+            tx.execute("UPDATE xmp_seq SET seq = seq + 1", [])?;
             tx.execute(
-                "INSERT INTO xmp_queue (photo_id, jpeg_path, raf_path, rating, tags)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
+                "INSERT INTO xmp_queue (photo_id, jpeg_path, raf_path, rating, tags, job_seq)
+                 VALUES (?1, ?2, ?3, ?4, ?5, (SELECT seq FROM xmp_seq))
                  ON CONFLICT(photo_id) DO UPDATE SET
-                   tags = excluded.tags, status = 'pending', attempts = 0, last_error = NULL",
+                   tags = excluded.tags, job_seq = excluded.job_seq,
+                   status = 'pending', attempts = 0, last_error = NULL",
                 params![photo_id, jpeg, raf, rating, to_json],
             )?;
         }
@@ -793,7 +824,7 @@ impl Store {
     pub fn xmp_take_batch(&self, limit: usize) -> rusqlite::Result<Vec<XmpJob>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT photo_id, jpeg_path, raf_path, rating, tags FROM xmp_queue
+            "SELECT photo_id, jpeg_path, raf_path, rating, tags, job_seq FROM xmp_queue
              WHERE status = 'pending' AND attempts < 5 LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit as i64], |r| {
@@ -804,35 +835,33 @@ impl Store {
                 raf: r.get(2)?,
                 rating: r.get::<_, i64>(3)? as u8,
                 tags: tags.and_then(|t| serde_json::from_str(&t).ok()),
+                job_seq: r.get(5)?,
             })
         })?;
         rows.collect()
     }
 
-    /// Remove a completed job — but only if the rating hasn't changed since it
-    /// was taken (a newer keypress re-queues with a different value).
-    ///
-    /// KNOWN FOLLOW-UP (predates faces, reported in docs/reviews/faces/REVIEW_ROUND4.md §6): the
-    /// compare-and-delete token is (photo_id, rating) only, so a tags-only
-    /// re-edit at the same rating can be deleted by the older job's
-    /// completion and its file write lost. The fix is a per-job monotonic
-    /// token compared here — deliberately deferred out of the faces branch.
-    pub fn xmp_done(&self, photo_id: &str, written_rating: u8) -> rusqlite::Result<()> {
+    /// Remove a completed job — but only the exact job that ran. Any re-edit
+    /// (rating OR tags) replaces the row with a fresh job_seq, so a stale
+    /// completion can never delete work it didn't perform.
+    pub fn xmp_done(&self, photo_id: &str, job_seq: i64) -> rusqlite::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "DELETE FROM xmp_queue WHERE photo_id = ?1 AND rating = ?2",
-            params![photo_id, written_rating],
+            "DELETE FROM xmp_queue WHERE photo_id = ?1 AND job_seq = ?2",
+            params![photo_id, job_seq],
         )?;
         Ok(())
     }
 
-    pub fn xmp_error(&self, photo_id: &str, err: &str) -> rusqlite::Result<()> {
+    /// Record a failure against the exact job that ran; a row replaced by a
+    /// newer edit is left untouched (the new job starts with a clean slate).
+    pub fn xmp_error(&self, photo_id: &str, job_seq: i64, err: &str) -> rusqlite::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE xmp_queue SET attempts = attempts + 1, last_error = ?2,
+            "UPDATE xmp_queue SET attempts = attempts + 1, last_error = ?3,
              status = CASE WHEN attempts + 1 >= 5 THEN 'error' ELSE 'pending' END
-             WHERE photo_id = ?1",
-            params![photo_id, err],
+             WHERE photo_id = ?1 AND job_seq = ?2",
+            params![photo_id, job_seq, err],
         )?;
         Ok(())
     }
@@ -1092,8 +1121,15 @@ mod tests {
         // Five failed attempts park the job as 'error' — it must leave
         // `pending` (the worker will never take it again) and show up in
         // `failed` with its error message.
+        let job_a = s
+            .xmp_take_batch(8)
+            .unwrap()
+            .into_iter()
+            .find(|j| j.photo_id == "a")
+            .unwrap();
         for _ in 0..5 {
-            s.xmp_error("a", "exiftool spawn: not found").unwrap();
+            s.xmp_error("a", job_a.job_seq, "exiftool spawn: not found")
+                .unwrap();
         }
         let st = s.xmp_status().unwrap();
         assert_eq!((st.pending, st.failed), (1, 1));
@@ -1111,5 +1147,35 @@ mod tests {
         let st = s.xmp_status().unwrap();
         assert_eq!((st.pending, st.failed), (2, 0));
         assert_eq!(st.last_error, None);
+    }
+
+    #[test]
+    fn stale_completion_never_deletes_a_reedited_job() {
+        let s = mem_store();
+        let f = s.open_folder("/tmp/x").unwrap();
+        s.sync_photos(f.folder_id, &[entry("a", "A")]).unwrap();
+
+        // Worker takes the rating job…
+        s.set_rating(f.folder_id, "a", 3).unwrap();
+        let old_job = s.xmp_take_batch(8).unwrap().pop().unwrap();
+
+        // …then a tags-only re-edit at the SAME rating replaces the row.
+        s.set_tags(f.folder_id, "a", &["print".into()]).unwrap();
+
+        // The old job completes: it must not delete the newer job.
+        s.xmp_done("a", old_job.job_seq).unwrap();
+        let fresh = s.xmp_take_batch(8).unwrap();
+        assert_eq!(fresh.len(), 1, "re-edited job must survive stale completion");
+        assert_eq!(fresh[0].tags.as_deref(), Some(&["print".to_string()][..]));
+        assert!(fresh[0].job_seq > old_job.job_seq, "tokens are monotonic");
+
+        // A stale error is likewise a no-op against the replaced row.
+        s.xmp_error("a", old_job.job_seq, "boom").unwrap();
+        assert_eq!(s.xmp_status().unwrap().pending, 1);
+        assert_eq!(s.xmp_status().unwrap().last_error, None);
+
+        // The current job's completion clears it.
+        s.xmp_done("a", fresh[0].job_seq).unwrap();
+        assert_eq!(s.xmp_status().unwrap().pending, 0);
     }
 }

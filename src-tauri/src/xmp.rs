@@ -356,7 +356,7 @@ fn process_job_inner(store: &Store, et: &Exiftool, job: &crate::store::XmpJob, p
             };
             match refreshed {
                 Ok(()) => {
-                    if let Err(e) = store.xmp_done(&job.photo_id, job.rating) {
+                    if let Err(e) = store.xmp_done(&job.photo_id, job.job_seq) {
                         // The row stays; the next pass rewrites (idempotent)
                         // and tries again. Never silent.
                         eprintln!("xmp: completed write for {} but could not clear its queue row ({e}); will retry", job.photo_id);
@@ -367,12 +367,13 @@ fn process_job_inner(store: &Store, et: &Exiftool, job: &crate::store::XmpJob, p
                         "xmp: {} rewritten but stat refresh failed ({e}); keeping the queue row",
                         job.photo_id
                     );
-                    let _ = store.xmp_error(&job.photo_id, &format!("stat refresh: {e}"));
+                    let _ =
+                        store.xmp_error(&job.photo_id, job.job_seq, &format!("stat refresh: {e}"));
                 }
             }
         }
         Err(e) => {
-            let _ = store.xmp_error(&job.photo_id, &e);
+            let _ = store.xmp_error(&job.photo_id, job.job_seq, &e);
         }
     }
 }
@@ -612,7 +613,8 @@ mod tests {
         assert!(!drain_blocking(&store, ms(250)));
 
         // Once the write is done, drain succeeds.
-        store.xmp_done("a", 3).unwrap();
+        let job = store.xmp_take_batch(1).unwrap().pop().unwrap();
+        store.xmp_done("a", job.job_seq).unwrap();
         assert!(drain_blocking(&store, ms(50)));
         std::fs::remove_dir_all(&dir).unwrap();
     }

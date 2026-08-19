@@ -2436,7 +2436,7 @@ mod tests {
                 .lock_conn()
                 .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            6
+            crate::store::SCHEMA_VERSION
         );
         assert!(store.faces_enabled().unwrap(), "control rows seeded");
         assert_eq!(state_get(&store.lock_conn(), "index_epoch").unwrap(), 1);
@@ -2500,7 +2500,7 @@ mod tests {
             assert_eq!(
                 conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                     .unwrap(),
-                6
+                crate::store::SCHEMA_VERSION
             );
             let (chip_rev, stored_face_rev): (i64, i64) = conn
                 .query_row(
@@ -2642,7 +2642,7 @@ mod tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            6
+            crate::store::SCHEMA_VERSION
         );
         // Both columns are live and queryable after the rerun.
         conn.query_row(
