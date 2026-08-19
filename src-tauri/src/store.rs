@@ -1165,7 +1165,11 @@ mod tests {
         // The old job completes: it must not delete the newer job.
         s.xmp_done("a", old_job.job_seq).unwrap();
         let fresh = s.xmp_take_batch(8).unwrap();
-        assert_eq!(fresh.len(), 1, "re-edited job must survive stale completion");
+        assert_eq!(
+            fresh.len(),
+            1,
+            "re-edited job must survive stale completion"
+        );
         assert_eq!(fresh[0].tags.as_deref(), Some(&["print".to_string()][..]));
         assert!(fresh[0].job_seq > old_job.job_seq, "tokens are monotonic");
 
