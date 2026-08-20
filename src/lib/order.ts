@@ -53,6 +53,24 @@ export function passesPersonFilter(
 }
 
 /**
+ * Focus filter: show only photos scoring BELOW the user's soft threshold
+ * (settings.toml [focus]). Like the person filter, an unscanned photo is
+ * simply absent from the map and fails — matches stream in as the sweep
+ * progresses rather than the list lying about a complete answer. With no
+ * threshold configured the filter is inert (Ember never judges on its own).
+ */
+export function passesFocusFilter(
+  p: Photo,
+  on: boolean,
+  threshold: number | null,
+  scores: Record<string, number>,
+): boolean {
+  if (!on || threshold === null) return true;
+  const s = scores[p.id];
+  return s !== undefined && s < threshold;
+}
+
+/**
  * Preview-priority hint for the backend: everything the user can currently
  * reach, nearest-first order, then every other photo in the folder.
  *

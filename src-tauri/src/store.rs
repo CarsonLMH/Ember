@@ -141,7 +141,7 @@ fn add_column_if_absent(
 /// The schema version a fully-migrated DB carries (`PRAGMA user_version`).
 /// The final migration stage stamps this; tests assert against it so a new
 /// stage can't silently leave them expecting the old number.
-pub(crate) const SCHEMA_VERSION: i64 = 7;
+pub(crate) const SCHEMA_VERSION: i64 = 8;
 
 impl Store {
     pub fn new(path: &Path) -> rusqlite::Result<Self> {
@@ -280,6 +280,26 @@ impl Store {
             conn.execute_batch(
                 "CREATE TABLE IF NOT EXISTS xmp_seq (id INTEGER PRIMARY KEY CHECK (id = 1), seq INTEGER NOT NULL);
                  INSERT OR IGNORE INTO xmp_seq (id, seq) VALUES (1, 0);",
+            )?;
+            conn.pragma_update(None, "user_version", 7)?;
+        }
+        // v8: focus check — sharpness score at the AF point, derived from the
+        // cached preview (focus.rs). Not a verdict: no journal rows, no undo.
+        // status: 'ok' (score present) | 'no_af' | 'manual' | 'tracking' |
+        // 'error'. One row per photo; the cache-janitor/preview lifecycle
+        // never rewrites it (scores describe source pixels, which culling
+        // never alters).
+        if version < 8 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS focus_scan (
+                    photo_id TEXT PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
+                    status TEXT NOT NULL,
+                    score REAL,
+                    af_x REAL,
+                    af_y REAL,
+                    patch_px INTEGER,
+                    scanned_at INTEGER NOT NULL
+                );",
             )?;
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
@@ -946,6 +966,63 @@ impl Store {
         rows.collect()
     }
 
+    // ---------- focus check (focus.rs) ----------
+
+    /// Photos the focus sweep has already answered (any status) — its skip-set.
+    pub fn focus_ids(&self) -> rusqlite::Result<std::collections::HashSet<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT photo_id FROM focus_scan")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.collect()
+    }
+
+    /// Upsert one photo's focus-check result (derived data — last write wins).
+    pub fn set_focus_scan(
+        &self,
+        photo_id: &str,
+        status: &str,
+        score: Option<f64>,
+        af_x: Option<f64>,
+        af_y: Option<f64>,
+        patch_px: Option<i64>,
+    ) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO focus_scan (photo_id, status, score, af_x, af_y, patch_px, scanned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(photo_id) DO UPDATE SET status = excluded.status,
+                score = excluded.score, af_x = excluded.af_x, af_y = excluded.af_y,
+                patch_px = excluded.patch_px, scanned_at = excluded.scanned_at",
+            params![photo_id, status, score, af_x, af_y, patch_px, now_ms()],
+        )?;
+        Ok(())
+    }
+
+    /// Folder-wide scores for the HUD chip, filmstrip dots and focus filter.
+    /// Only 'ok' rows appear; a photo absent from the map is unscanned or has
+    /// no scoreable AF point — either way, no number to show.
+    pub fn focus_map(&self, folder_id: i64) -> rusqlite::Result<HashMap<String, f64>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT f.photo_id, f.score FROM focus_scan f
+             JOIN photos p ON p.id = f.photo_id
+             WHERE p.folder_id = ?1 AND p.trashed = 0
+               AND f.status = 'ok' AND f.score IS NOT NULL",
+        )?;
+        let rows = stmt.query_map(params![folder_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect()
+    }
+
+    pub fn photo_folder_id(&self, photo_id: &str) -> rusqlite::Result<Option<i64>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT folder_id FROM photos WHERE id = ?1",
+            params![photo_id],
+            |r| r.get(0),
+        )
+        .optional()
+    }
+
     // ---------- preview validity ----------
 
     pub fn preview_stat(&self, photo_id: &str) -> rusqlite::Result<Option<(u64, u64)>> {
@@ -1017,6 +1094,51 @@ mod tests {
             mtime: 1,
             size: 1,
         })
+    }
+
+    #[test]
+    fn focus_scan_roundtrip_map_and_migration() {
+        let s = mem_store();
+        {
+            let conn = s.conn.lock().unwrap();
+            let v: i64 = conn
+                .query_row("PRAGMA user_version", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(v, SCHEMA_VERSION, "fresh DB lands on the current schema");
+        }
+        let f = s.open_folder("/tmp/x").unwrap();
+        s.sync_photos(
+            f.folder_id,
+            &[entry("a", "A"), entry("b", "B"), entry("c", "C")],
+        )
+        .unwrap();
+        s.set_focus_scan("a", "ok", Some(270.5), Some(0.65), Some(0.32), Some(134))
+            .unwrap();
+        s.set_focus_scan("b", "no_af", None, None, None, None)
+            .unwrap();
+        s.set_focus_scan("c", "ok", Some(89.4), Some(0.65), Some(0.32), Some(134))
+            .unwrap();
+
+        assert_eq!(
+            s.focus_ids().unwrap().len(),
+            3,
+            "skip-set counts every status"
+        );
+        let map = s.focus_map(f.folder_id).unwrap();
+        assert_eq!(map.len(), 2, "only 'ok' rows carry a score");
+        assert!((map["a"] - 270.5).abs() < 1e-9);
+
+        // Upsert: a rescan overwrites in place (derived data, last write wins).
+        s.set_focus_scan("c", "ok", Some(91.0), Some(0.65), Some(0.32), Some(134))
+            .unwrap();
+        assert!((s.focus_map(f.folder_id).unwrap()["c"] - 91.0).abs() < 1e-9);
+
+        // Trashed photos leave the map (their scores stay on record).
+        s.record_trash(f.folder_id, "a", &TrashPayload::default())
+            .unwrap();
+        assert!(!s.focus_map(f.folder_id).unwrap().contains_key("a"));
+        assert_eq!(s.photo_folder_id("b").unwrap(), Some(f.folder_id));
+        assert_eq!(s.photo_folder_id("nope").unwrap(), None);
     }
 
     #[test]

@@ -374,6 +374,9 @@ export default function App() {
         case 'person_filter':
           setShowPersonFilter((v) => !v);
           break;
+        case 'focus_filter':
+          session.toggleFocusFilter();
+          break;
         case 'face_badges':
           setShowFaces((v) => {
             localStorage.setItem('faceBadges', v ? '0' : '1');
@@ -569,6 +572,20 @@ export default function App() {
                 {state.currentRecipe.name ?? 'unknown recipe'}
               </span>
             )}
+            {state.focusScores[photo.id] !== undefined && (
+              <span
+                className={`hud-chip${
+                  state.focusSoftThreshold !== null &&
+                  state.focusScores[photo.id] < state.focusSoftThreshold
+                    ? ' hud-warn'
+                    : ' hud-dim'
+                }`}
+                title="Focus-check score at the AF point (higher = sharper); compare within a burst"
+              >
+                AF {Math.round(state.focusScores[photo.id])}
+              </span>
+            )}
+            {state.focusFilter && <span className="hud-chip">soft focus</span>}
             {state.tagFilter && <span className="hud-chip">#{state.tagFilter}</span>}
             {state.personFilter !== null && (
               <span className="hud-chip">
@@ -677,6 +694,7 @@ export default function App() {
         <ExifPanel
           photoId={photo.id}
           recipe={state.currentRecipe}
+          focusScore={state.focusScores[photo.id] ?? null}
           onRecipeSaved={() => void session.recipesChanged()}
         />
       )}

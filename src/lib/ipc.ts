@@ -117,6 +117,27 @@ export function getMetadata(photoId: string): Promise<string | null> {
   return invoke<string | null>('get_metadata', { photoId });
 }
 
+export interface FocusMapOut {
+  /** User-set line from settings.toml `[focus] soft_threshold`; null = scores
+   * display only (Ember never judges on its own). */
+  softThreshold: number | null;
+  /** photo id → AF-patch sharpness score; absent = unscanned or no AF point. */
+  scores: Record<string, number>;
+}
+
+export function focusMap(folderId: number): Promise<FocusMapOut> {
+  return invoke<FocusMapOut>('focus_map', { folderId });
+}
+
+export interface FocusProgress {
+  folderId: number | null;
+  photoIds: string[];
+}
+
+export function onFocusProgress(cb: (p: FocusProgress) => void): Promise<UnlistenFn> {
+  return listen<FocusProgress>('focus-progress', (e) => cb(e.payload));
+}
+
 export interface RecipeResult {
   name: string | null;
   matches: string[];

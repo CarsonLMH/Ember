@@ -4,12 +4,14 @@ import * as viewer from './viewer';
 import {
   facesEventApplies,
   facesForPhoto,
+  focusMap,
   getFocus,
   getRecipe,
   listPersons,
   listRecipes,
   maskUrl,
   onFacesProgress,
+  onFocusProgress,
   personMap,
   recipeMap,
   onPhotoMeta,
@@ -36,6 +38,7 @@ import {
   comparator,
   orderHint,
   passesFilter,
+  passesFocusFilter,
   passesPersonFilter,
   passesTagFilter,
   type FilterMode,
@@ -71,6 +74,12 @@ export interface SessionState {
   tagFilter: string | null;
   /** Person filter (SPEC §14) — person id, session-only like the others. */
   personFilter: number | null;
+  /** Focus check: photo id → AF-patch sharpness score (HUD chip, strip dots). */
+  focusScores: Record<string, number>;
+  /** settings.toml [focus] soft_threshold; null = display-only, no judgment. */
+  focusSoftThreshold: number | null;
+  /** Show only photos scoring below the threshold (Shift+A). */
+  focusFilter: boolean;
   /** Folder-scoped people, for the switcher and the HUD chip label. */
   persons: PersonOut[];
   /** Faces of the current photo: null until scanned (badges stay silent). */
@@ -109,6 +118,9 @@ let state: SessionState = {
   recipeNames: [],
   tagFilter: null,
   personFilter: null,
+  focusScores: {},
+  focusSoftThreshold: null,
+  focusFilter: false,
   persons: [],
   currentFaces: null,
   peopleVersion: 0,
@@ -160,6 +172,10 @@ export function start(): void {
     if (current && p.photoIds.includes(current.id)) void refreshFaces(current.id);
     schedulePersonRefresh();
   });
+  void onFocusProgress((p) => {
+    if (p.folderId !== null && p.folderId !== state.folderId) return;
+    scheduleFocusRefresh();
+  });
   void onXmpPending((s) => {
     // A write just got parked as permanently failed: say so once, loudly.
     if (s.failed > state.xmpFailed) {
@@ -199,6 +215,45 @@ function schedulePersonRefresh(): void {
       })
       .catch((e: unknown) => personDataFailed('Live person matches', e));
   }, 1000);
+}
+
+// ---------- focus check ----------
+
+/** Fetch folder scores; guard against a folder change mid-flight. When the
+ * focus filter is live, matches stream in like the person filter's. */
+async function loadFocusScores(): Promise<void> {
+  const { folderId } = state;
+  if (folderId === null) return;
+  try {
+    const map = await focusMap(folderId);
+    if (state.folderId !== folderId) return;
+    setState({ focusScores: map.scores, focusSoftThreshold: map.softThreshold });
+    if (state.focusFilter) rebuild(state.all, {}, currentPhoto()?.id ?? null);
+  } catch {
+    // Derived data — keep what we had; the next progress event retries.
+  }
+}
+
+/** Live scores while the sweep runs: one refetch per quiet second, not one
+ * state update per photo. */
+let focusRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleFocusRefresh(): void {
+  if (state.folderId === null || focusRefreshTimer) return;
+  focusRefreshTimer = setTimeout(() => {
+    focusRefreshTimer = null;
+    void loadFocusScores();
+  }, 1000);
+}
+
+/** Shift+A: show only photos soft at the AF point — needs the user's own
+ * threshold, because the raw score is texture-dependent and Ember does not
+ * judge on its own. */
+export function toggleFocusFilter(): void {
+  if (!state.focusFilter && state.focusSoftThreshold === null) {
+    showNotice('Set soft_threshold under [focus] in settings.toml to filter by focus');
+    return;
+  }
+  rebuild(state.all, { focusFilter: !state.focusFilter }, currentPhoto()?.id ?? null);
 }
 
 function showNotice(msg: string): void {
@@ -265,13 +320,15 @@ function rebuild(
   const tagFilter = patch.tagFilter !== undefined ? patch.tagFilter : state.tagFilter;
   const personFilter =
     patch.personFilter !== undefined ? patch.personFilter : state.personFilter;
+  const focusFilter = patch.focusFilter !== undefined ? patch.focusFilter : state.focusFilter;
   const sortedAll = [...all].sort(comparator(sort, reverse));
   const photos = sortedAll.filter(
     (p) =>
       passesFilter(p, filter) &&
       passesRecipeFilter(p, recipeFilter) &&
       passesTagFilter(p, tagFilter) &&
-      passesPersonFilter(p, personFilter, personMapCache),
+      passesPersonFilter(p, personFilter, personMapCache) &&
+      passesFocusFilter(p, focusFilter, state.focusSoftThreshold, state.focusScores),
   );
   let cursor: number;
   const focusIdx = focusId ? photos.findIndex((p) => p.id === focusId) : -1;
@@ -939,6 +996,8 @@ export async function openFolder(dir: string): Promise<void> {
       currentRecipe: null,
       recipeFilter: null,
       personFilter: null,
+      focusScores: {},
+      focusFilter: false,
       persons: [],
       currentFaces: null,
     });
@@ -949,6 +1008,7 @@ export async function openFolder(dir: string): Promise<void> {
     clearMetaCache();
     loadRecipeNames();
     loadPersons();
+    void loadFocusScores();
     const current = state.photos[cursor];
     if (!current) {
       viewer.render(null);
@@ -991,6 +1051,7 @@ export async function refresh(): Promise<void> {
   // A rescan can re-detect faces (pixel changes mark scans stale), so the
   // person map and people list are refetched rather than assumed.
   void peopleChanged();
+  void loadFocusScores();
   rebuild(merged, { trashedCount: result.trashedCount, missingCount: result.missingCount }, keepId);
   showNotice('Folder rescanned');
 }

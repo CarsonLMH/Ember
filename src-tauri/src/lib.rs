@@ -3,6 +3,7 @@ mod facedet;
 mod faces;
 mod facestore;
 mod fastexif;
+mod focus;
 mod janitor;
 mod keymap;
 mod metadata;
@@ -31,6 +32,7 @@ pub struct AppState {
     recipes: recipes::RecipeStore,
     proto_tx: crossbeam_channel::Sender<protocol::Job>,
     faces_cfg: settings::FacesCfg,
+    focus_cfg: settings::FocusCfg,
     /// settings.toml lives here; app-driven faces-enabled writes mirror to it.
     config_dir: PathBuf,
     /// Session-scoped undo-naming registry (toast-lifetime, not history).
@@ -274,6 +276,30 @@ fn get_focus(
         Some(json) => Ok(metadata::focus_point(&json)),
         None => Ok(None),
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FocusMapOut {
+    /// User-set line from settings.toml `[focus] soft_threshold`; None = 0 =
+    /// display-only (Ember never judges on its own).
+    pub soft_threshold: Option<f32>,
+    /// photo id → AF-patch sharpness score, scanned 'ok' rows only.
+    pub scores: HashMap<String, f64>,
+}
+
+/// Folder-wide focus-check scores (HUD chip, filmstrip dots, soft filter).
+#[tauri::command]
+fn focus_map(state: tauri::State<'_, AppState>, folder_id: i64) -> Result<FocusMapOut, String> {
+    let scores = state
+        .store
+        .focus_map(folder_id)
+        .map_err(|e| e.to_string())?;
+    let t = state.focus_cfg.soft_threshold;
+    Ok(FocusMapOut {
+        soft_threshold: (t > 0.0).then_some(t),
+        scores,
+    })
 }
 
 /// Raw grouped metadata JSON for the panel (frontend picks and formats).
@@ -1352,6 +1378,11 @@ pub fn run() {
                 faces::models_dir(app.path().resource_dir().ok()),
                 cfg.faces,
             );
+            // Focus check rides the preview + metadata caches; nothing to
+            // clean up when disabled, so a disabled sweep simply never spawns.
+            if cfg.focus.enabled {
+                focus::spawn_worker(app.handle().clone(), store.clone(), preview.clone());
+            }
             app.manage(AppState {
                 store,
                 preview,
@@ -1359,6 +1390,7 @@ pub fn run() {
                 recipes: recipe_store,
                 proto_tx: tx,
                 faces_cfg: cfg.faces,
+                focus_cfg: cfg.focus,
                 config_dir: data_dir,
                 naming_ops: std::sync::Mutex::new(HashMap::new()),
                 naming_seq: std::sync::atomic::AtomicU64::new(1),
@@ -1390,6 +1422,7 @@ pub fn run() {
             get_keymap,
             get_tag_vocab,
             get_focus,
+            focus_map,
             get_metadata,
             get_recipe,
             recipe_map,

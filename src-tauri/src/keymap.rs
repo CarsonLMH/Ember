@@ -39,6 +39,7 @@ const DEFAULTS: &[(&str, &[&str], &str)] = &[
         &["Shift+p"],
         "Person filter quick-switcher",
     ),
+    ("focus_filter", &["Shift+a"], "Filter: soft at the AF point"),
     (
         "face_badges",
         &["Shift+f"],

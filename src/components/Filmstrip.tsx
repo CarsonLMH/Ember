@@ -78,9 +78,15 @@ export default function Filmstrip({
 
   const start = Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN);
   const end = Math.min(photos.length, Math.ceil((scrollTop + height) / ROW) + OVERSCAN);
+  // Focus-check dots appear only past the user's own settings.toml threshold.
+  const { focusScores, focusSoftThreshold } = session.getState();
   const rows = [];
   for (let i = start; i < end; i++) {
     const p = photos[i];
+    const soft =
+      focusSoftThreshold !== null &&
+      focusScores[p.id] !== undefined &&
+      focusScores[p.id] < focusSoftThreshold;
     rows.push(
       <div
         key={p.id}
@@ -91,6 +97,11 @@ export default function Filmstrip({
         <StripThumb id={p.id} />
         {p.rating > 0 && <span className="strip-stars">{'★'.repeat(p.rating)}</span>}
         {p.missing && <span className="strip-missing-mark">⚠</span>}
+        {soft && (
+          <span className="strip-soft" title="soft at the AF point">
+            ●
+          </span>
+        )}
         {p.tags && p.tags.length > 0 && (
           <span className="strip-tags">#{p.tags.length}</span>
         )}

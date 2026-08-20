@@ -62,6 +62,8 @@ vi.mock('./ipc', async (importOriginal) => {
     }),
     onPhotoMeta: vi.fn(async () => () => {}),
     onXmpPending: vi.fn(async () => () => {}),
+    onFocusProgress: vi.fn(async () => () => {}),
+    focusMap: vi.fn(async () => ({ softThreshold: null, scores: {} })),
     facesForPhoto: (id: string) => facesForPhoto(id),
     personMap: () => personMap(),
     listPersons: vi.fn(async () => []),

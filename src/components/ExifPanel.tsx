@@ -76,6 +76,15 @@ const GROUPS: GroupDef[] = [
     ],
   },
   {
+    title: 'Autofocus',
+    rows: [
+      { label: 'AF area', keys: ['FujiFilm:AFAreaMode', 'FujiFilm:AFMode'] },
+      { label: 'Focus mode', keys: ['FujiFilm:FocusMode'] },
+      { label: 'Camera focus check', keys: ['FujiFilm:FocusWarning'] },
+      { label: 'Camera blur check', keys: ['FujiFilm:BlurWarning'] },
+    ],
+  },
+  {
     title: 'Camera',
     rows: [
       { label: 'Camera', keys: ['IFD0:Model'] },
@@ -189,10 +198,13 @@ function RecipeHeader({
 export default function ExifPanel({
   photoId,
   recipe,
+  focusScore,
   onRecipeSaved,
 }: {
   photoId: string;
   recipe: { name: string | null; hasMeta: boolean } | null;
+  /** Ember's AF-patch sharpness score; null until the focus sweep gets there. */
+  focusScore: number | null;
   onRecipeSaved: () => void;
 }) {
   const [meta, setMeta] = useState<Meta | null>(getCachedMeta(photoId) ?? null);
@@ -238,6 +250,11 @@ export default function ExifPanel({
           const rows = group.rows
             .map((row) => ({ label: row.label, value: valueOf(meta, row) }))
             .filter((r) => r.value !== null);
+          // Ember's own score joins the camera's AF facts (higher = sharper,
+          // comparable within a burst — see settings.toml [focus]).
+          if (group.title === 'Autofocus' && focusScore !== null) {
+            rows.unshift({ label: 'Ember score', value: String(Math.round(focusScore)) });
+          }
           if (rows.length === 0) return null;
           return (
             <section key={group.title} className="exif-group">

@@ -43,6 +43,28 @@ impl Default for FacesCfg {
     }
 }
 
+/// `[focus]` — AF-point focus check (focus.rs). The score is texture-dependent
+/// (a sharp flat wall scores lower than out-of-focus grass), so Ember only
+/// displays it; `soft_threshold` is the user's own line, off at 0.
+#[derive(Debug, Clone, Copy)]
+pub struct FocusCfg {
+    pub enabled: bool,
+    pub soft_threshold: f32,
+}
+
+impl Default for FocusCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            // Calibration anchor (X-T50 burst pair, 2026-08-20): missed frame
+            // ~90 vs sharp burst-mate ~270 on the 2600px preview. No default
+            // threshold — scores are only comparable within similar content,
+            // and the product decision is display-only until the user opts in.
+            soft_threshold: 0.0,
+        }
+    }
+}
+
 /// `[cache]` — preview/thumb/chip cache budget. 0 disables cleanup.
 #[derive(Debug, Clone, Copy)]
 pub struct CacheCfg {
@@ -60,6 +82,7 @@ pub struct Settings {
     pub blinkies: BlinkiesCfg,
     pub faces: FacesCfg,
     pub cache: CacheCfg,
+    pub focus: FocusCfg,
 }
 
 fn default_file_contents() -> String {
@@ -85,6 +108,16 @@ fn default_file_contents() -> String {
      # Auto-recognition thresholds (calibrated on real photos 2026-08).\n\
      auto_assign_threshold = 0.45\n\
      auto_assign_margin = 0.08\n\n\
+     [focus]\n\
+     # Focus check: Ember scores sharpness in a patch around the recorded AF\n\
+     # point (higher = sharper) and shows it as the \"AF n\" HUD chip. The\n\
+     # score depends on subject texture — compare shots of the same scene\n\
+     # (a burst), not across scenes. Reference: a clearly missed frame scored\n\
+     # ~90 while its sharp burst-mate scored ~270.\n\
+     enabled = true\n\
+     # Scores BELOW this value get the amber chip, a filmstrip dot, and the\n\
+     # Shift+A soft-focus filter. 0 = no judgment, scores display only.\n\
+     soft_threshold = 0.0\n\n\
      [cache]\n\
      # Preview/thumbnail cache budget in MB (~1MB per photo). Once per launch,\n\
      # photos from the least-recently-opened folders are pruned back under\n\
@@ -151,6 +184,21 @@ pub fn load(config_dir: &Path) -> Settings {
         min_det_score: get_f32("min_det_score", 0.0, 1.0).unwrap_or(fd.min_det_score),
     };
 
+    let fo = parsed.as_ref().and_then(|v| v.get("focus"));
+    let focus = FocusCfg {
+        enabled: fo
+            .and_then(|s| s.get("enabled"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(FocusCfg::default().enabled),
+        soft_threshold: fo
+            .and_then(|s| s.get("soft_threshold"))
+            // Users will write "150" as readily as "150.0" — accept both.
+            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+            .map(|v| v as f32)
+            .filter(|v| *v >= 0.0)
+            .unwrap_or(FocusCfg::default().soft_threshold),
+    };
+
     let cache = CacheCfg {
         max_mb: parsed
             .as_ref()
@@ -165,6 +213,7 @@ pub fn load(config_dir: &Path) -> Settings {
         blinkies,
         faces,
         cache,
+        focus,
     }
 }
 
@@ -280,6 +329,32 @@ mod tests {
             (f.min_det_score - 0.8).abs() < 1e-6,
             "out of range → default"
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn focus_defaults_override_and_integer_threshold() {
+        let dir = std::env::temp_dir().join(format!("a2setfo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = load(&dir).focus;
+        assert!(f.enabled);
+        assert_eq!(f.soft_threshold, 0.0, "no judgment by default");
+        // Integer threshold (how a user will actually type it) + disable.
+        std::fs::write(
+            dir.join("settings.toml"),
+            "[focus]\nenabled = false\nsoft_threshold = 150\n",
+        )
+        .unwrap();
+        let f = load(&dir).focus;
+        assert!(!f.enabled);
+        assert!((f.soft_threshold - 150.0).abs() < 1e-6);
+        // Negative is out of range → default.
+        std::fs::write(
+            dir.join("settings.toml"),
+            "[focus]\nsoft_threshold = -3.0\n",
+        )
+        .unwrap();
+        assert_eq!(load(&dir).focus.soft_threshold, 0.0);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

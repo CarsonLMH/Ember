@@ -4,6 +4,7 @@ import {
   comparator,
   orderHint,
   passesFilter,
+  passesFocusFilter,
   passesPersonFilter,
   passesTagFilter,
 } from './order';
@@ -109,6 +110,24 @@ describe('passesPersonFilter', () => {
 
   it('unscanned photos fail until the worker reaches them', () => {
     expect(passesPersonFilter(photo({ stem: 'unseen' }), 1, map)).toBe(false);
+  });
+});
+
+describe('passesFocusFilter', () => {
+  const scores = { a: 89.4, b: 270.5 };
+
+  it('inert when off or without a user threshold', () => {
+    expect(passesFocusFilter(photo({ stem: 'a' }), false, 150, scores)).toBe(true);
+    expect(passesFocusFilter(photo({ stem: 'b' }), true, null, scores)).toBe(true);
+  });
+
+  it('keeps only photos scoring below the threshold', () => {
+    expect(passesFocusFilter(photo({ stem: 'a' }), true, 150, scores)).toBe(true);
+    expect(passesFocusFilter(photo({ stem: 'b' }), true, 150, scores)).toBe(false);
+  });
+
+  it('unscanned photos fail until the sweep reaches them', () => {
+    expect(passesFocusFilter(photo({ stem: 'unseen' }), true, 150, scores)).toBe(false);
   });
 });
 
