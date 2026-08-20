@@ -54,6 +54,33 @@ macOS photo-culling app (Tauri 2 + Rust + React/TS). **Read SPEC.md first** — 
 - Rust: clippy-clean, `cargo fmt`. TS: strict mode, no `any` in the image/cache/journal paths.
 - Code stays clean and conventional (possible future open-sourcing) but built for exactly one user — no speculative abstractions.
 
+## Design language
+
+Ember's chrome is a darkroom: dark-only, quiet, native-feeling. The photograph
+is the only hero — chrome never competes with it for color or attention. This
+section outranks any installed design skill (frontend-design, HIG,
+apple-design, web-design-guidelines); where they conflict with it, this wins.
+
+- **Deliberate exceptions to generic design-skill advice** — do not "fix" these:
+  - System font stack (`-apple-system` / SF Pro) is the *correct* choice for a
+    native Mac tool, not a lazy default. Never swap in a webfont.
+  - Flat dark grounds, no gradients/atmosphere/texture. Backgrounds recede so
+    photos read true; near-neutral dark grays are calibrated viewing surround.
+  - The chrome is static by design (zero animations today). Motion may be added
+    only as considered micro-feedback in chrome (panels, badges, toasts) —
+    CSS-only, interruptible, `prefers-reduced-motion`-respecting — and **never
+    on the flip path**: nothing animates on or delays keypress→rendered flip.
+- **Distinctiveness budget** lives in semantics, not layout novelty: selection
+  blue `#6ea8ff`, rating gold `#f5c518`, warning amber `#e8a33d`, danger red
+  `#e07070`. Color in chrome means something or it isn't there. Layout follows
+  macOS conventions (sidebar/filmstrip, panels, keyboard-first everything).
+- **Known debt**: App.css predates tokens — ~15 ad-hoc gray literals. When a
+  slice already touches an area, consolidate its colors into CSS variables
+  (`--bg`, `--panel`, `--ink`, `--muted`, `--line` + the four semantics above);
+  no bulk restyle commits.
+- Density and restraint over expressiveness: hairline `1px` borders, small
+  radii (3–4px), 11–13px UI type, tabular numerals for counts/ratings.
+
 ## Definition of done (every slice)
 
 1. App runs (`tauri dev`, or installed `.app` at milestones).
