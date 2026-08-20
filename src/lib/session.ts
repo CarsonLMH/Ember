@@ -629,18 +629,15 @@ export function toggleZoom(): void {
   }
 }
 
-/** F toggles: first press zooms 100% onto the AF point, second press (same
- * photo) restores exactly the view you had before — fit or a manual zoom. */
-let viewBeforeAf: ReturnType<typeof viewer.getView> = null;
-let afZoomPhotoId: string | null = null;
-
+/** F toggles: zoom 100% onto the AF point; from any zoom, F returns to fit
+ * (same as Z). Locked zoom carries the view across flips, so the exit branch
+ * must not care which photo started the zoom. */
 export async function focusZoom(): Promise<void> {
   const photo = currentPhoto();
   if (!photo) return;
-  if (afZoomPhotoId === photo.id && viewer.isZoomed()) {
-    viewer.setView(viewBeforeAf);
-    afZoomPhotoId = null;
-    onManualZoomChange();
+  if (viewer.isZoomed()) {
+    viewer.exitZoom();
+    dropFullres();
     return;
   }
   const p = await focusFor(photo.id);
@@ -649,8 +646,6 @@ export async function focusZoom(): Promise<void> {
     showNotice('No AF point recorded for this photo');
     return;
   }
-  viewBeforeAf = viewer.getView();
-  afZoomPhotoId = photo.id;
   viewer.zoomToPoint(p[0], p[1]);
   afterShow(photo);
 }

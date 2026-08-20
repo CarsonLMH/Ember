@@ -368,20 +368,6 @@ export function panBy(dx: number, dy: number): void {
   interact();
 }
 
-/** Snapshot/restore of the view state — powers the F key's toggle-back. */
-export function getView(): ViewState | null {
-  return view ? { ...view } : null;
-}
-
-export function setView(v: ViewState | null): void {
-  if (v === null) {
-    exitZoom();
-    return;
-  }
-  view = clampView({ ...v });
-  interactNow();
-}
-
 /** Click/drag on the navigator mini-map jumps the view. Returns true when the
  * point (device px) landed on the map. */
 export function minimapNavigate(x: number, y: number): boolean {

@@ -99,6 +99,7 @@ vi.mock('./viewer', () => ({
   render: vi.fn(),
   isZoomed: vi.fn(() => false),
   exitZoom: vi.fn(),
+  zoomToPoint: vi.fn(),
 }));
 vi.mock('./metaCache', () => ({ clearMetaCache: vi.fn(), ensureMeta: vi.fn(async () => null) }));
 vi.mock('./perf', () => ({
@@ -110,6 +111,8 @@ vi.mock('./perf', () => ({
 }));
 
 const session = await import('./session');
+const viewer = await import('./viewer');
+const ipc = await import('./ipc');
 
 async function settle(): Promise<void> {
   for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
@@ -197,5 +200,32 @@ describe('faces-progress handling', () => {
     await pending;
     expect(session.getState().personFilter).toBeNull();
     expect(session.getState().photos.map((p) => p.id)).toEqual(['c']);
+  });
+});
+
+describe('focusZoom (F key)', () => {
+  beforeEach(async () => {
+    session.start();
+    await session.openFolder('/photos');
+    await settle();
+    vi.mocked(viewer.isZoomed).mockReturnValue(false);
+    vi.mocked(viewer.exitZoom).mockClear();
+    vi.mocked(viewer.zoomToPoint).mockClear();
+  });
+
+  it('F while zoomed exits to fit, even after flipping to another photo', async () => {
+    // Regression: locked zoom survives the flip, so the F pressed on photo b
+    // arrives with photo a's AF zoom still on screen. It must exit, not
+    // re-zoom onto b's AF point.
+    vi.mocked(ipc.getFocus).mockResolvedValue([0.3, 0.4]);
+    await session.focusZoom();
+    expect(viewer.zoomToPoint).toHaveBeenCalledWith(0.3, 0.4);
+
+    vi.mocked(viewer.isZoomed).mockReturnValue(true);
+    await goTo('b');
+    vi.mocked(viewer.zoomToPoint).mockClear();
+    await session.focusZoom();
+    expect(viewer.exitZoom).toHaveBeenCalled();
+    expect(viewer.zoomToPoint).not.toHaveBeenCalled();
   });
 });
