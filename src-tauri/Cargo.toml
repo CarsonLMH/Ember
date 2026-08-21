@@ -17,6 +17,11 @@ tauri-build = { version = "2", features = [] }
 # WebdriverIO e2e harness. Never enabled in normal dev/ship builds: the
 # embedded WebDriver server must not exist in the binary the user culls with.
 e2e = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
+# Design-review loop (screenshots, DOM, computed styles, IPC monitor) for
+# Claude via @hypothesi/tauri-mcp-server. Dev-only by construction: the
+# shipped .app is a --debug build, so cfg(debug_assertions) would not keep
+# it out — only `npm run tauri:mcp` enables it.
+mcp = ["dep:tauri-plugin-mcp-bridge"]
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -52,6 +57,7 @@ ort = { version = "=2.0.0-rc.13", default-features = false, features = [
     "std",
 ] }
 sha2 = "0.10"
+tauri-plugin-mcp-bridge = { version = "0.12", optional = true }
 
 [profile.dev]
 # JPEG decode in unoptimized builds is unusably slow; keep deps optimized.

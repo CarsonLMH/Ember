@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "tauri": "tauri",
+    "tauri:mcp": "tauri dev --features mcp --config src-tauri/tauri.mcp.conf.json",
     "e2e:build": "VITE_E2E=1 tauri build --debug --no-bundle --features e2e --config src-tauri/tauri.e2e.conf.json",
     "e2e": "wdio run e2e/wdio.conf.ts",
     "e2e:perf": "EMBER_E2E_PERF=1 wdio run e2e/wdio.conf.ts"

@@ -1341,6 +1341,14 @@ pub fn run() {
     let builder = builder
         .plugin(tauri_plugin_wdio::init())
         .plugin(tauri_plugin_wdio_webdriver::init());
+    // mcp builds (cargo feature `mcp`) embed the MCP bridge for design-review
+    // sessions. Loopback only: the bridge has no auth and defaults to 0.0.0.0.
+    #[cfg(feature = "mcp")]
+    let builder = builder.plugin(
+        tauri_plugin_mcp_bridge::Builder::new()
+            .bind_address("127.0.0.1")
+            .build(),
+    );
     builder
         .setup(|app| {
             // Harness runs (EMBER_HIDDEN=1) keep their window invisible so

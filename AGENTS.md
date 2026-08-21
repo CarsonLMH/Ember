@@ -24,6 +24,11 @@ macOS photo-culling app (Tauri 2 + Rust + React/TS). **Read SPEC.md first** — 
 ## Commands
 
 - `npm run tauri dev` — run the app (dev, with perf HUD on backtick).
+- `npm run tauri:mcp` — same, plus the MCP bridge (cargo feature `mcp`, loopback
+  `127.0.0.1:9223`) so Claude can screenshot/inspect/drive the webview via the
+  `tauri` MCP server in `.mcp.json`. Design-review sessions only: never a gate
+  run, never a ship build (the shipped .app is `--debug`, so the feature flag,
+  not `debug_assertions`, is what keeps it out).
 - `npm run tauri build` — release `.app` (install to /Applications at stable milestones).
 - `cd src-tauri && cargo test` — Rust unit tests (pairing, journal replay, recipe matcher).
 - `cd src-tauri && cargo clippy && cargo fmt` — must be clean before commit.
