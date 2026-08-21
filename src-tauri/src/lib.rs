@@ -66,6 +66,10 @@ pub struct ScanResult {
     pub state: FolderState,
     pub trashed_count: usize,
     pub missing_count: usize,
+    /// Sessions (other folders) that own photos this scan found. Those photos
+    /// are excluded from `photos` — the UI offers a jump instead of showing
+    /// verdict-less ghosts.
+    pub foreign: Vec<store::ForeignOwner>,
 }
 
 #[tauri::command]
@@ -138,6 +142,21 @@ fn scan_folder(
         .sync_photos(folder.folder_id, &entries)
         .map_err(|e| e.to_string())?;
 
+    // Photos already owned by another session (same file, id = canonical-path
+    // hash — e.g. this folder is an ancestor of an indexed one) are excluded:
+    // presenting them here would show verdict-less ghosts of rated photos and
+    // split any new verdicts across journal lanes. The UI gets the owning
+    // sessions and offers a jump instead.
+    let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
+    let (foreign, foreign_ids) = state
+        .store
+        .foreign_owners(folder.folder_id, &ids)
+        .map_err(|e| e.to_string())?;
+    let entries: Vec<std::sync::Arc<scanner::PhotoEntry>> = entries
+        .into_iter()
+        .filter(|e| !foreign_ids.contains(&e.id))
+        .collect();
+
     let mut photos: Vec<PhotoOut> = entries
         .iter()
         .filter(|e| !existing.get(&e.id).map(|r| r.trashed).unwrap_or(false))
@@ -203,6 +222,14 @@ fn scan_folder(
         })
         .map(|e| e.id.clone())
         .collect();
+    // Adoption write-through backfill: ratings that exist only by adoption
+    // (no journal actions) may still be missing from the file's own XMP —
+    // e.g. adopted from an ApolloOne xattr. Queue the XMP write so other
+    // tools see the star; files that already agree are skipped.
+    let unjournaled = state
+        .store
+        .unjournaled_rated(folder.folder_id)
+        .unwrap_or_default();
     std::thread::spawn(move || {
         let meta = fastexif::photo_meta(&entries);
         let times: HashMap<&String, i64> = meta.iter().map(|(id, m)| (id, m.ts)).collect();
@@ -215,6 +242,18 @@ fn scan_folder(
             if let Some(r) = xmp::read_rating(e.jpeg.as_deref(), e.raf.as_deref()) {
                 if r > 0 && bg_store.adopt_rating(&e.id, r).unwrap_or(false) {
                     adopted.insert(e.id.clone(), r);
+                    if xmp::read_file_rating(e.jpeg.as_deref(), e.raf.as_deref()) != Some(r) {
+                        let _ = bg_store.enqueue_xmp(&e.id);
+                    }
+                }
+            }
+        }
+        let by_id: HashMap<&str, &std::sync::Arc<scanner::PhotoEntry>> =
+            entries.iter().map(|e| (e.id.as_str(), e)).collect();
+        for (id, rating) in &unjournaled {
+            if let Some(e) = by_id.get(id.as_str()) {
+                if xmp::read_file_rating(e.jpeg.as_deref(), e.raf.as_deref()) != Some(*rating) {
+                    let _ = bg_store.enqueue_xmp(id);
                 }
             }
         }
@@ -229,6 +268,7 @@ fn scan_folder(
         state: folder,
         trashed_count,
         missing_count,
+        foreign,
     })
 }
 
@@ -394,7 +434,11 @@ fn set_rating(
         .store
         .set_rating(folder_id, &photo_id, rating)
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| match e {
+            // The row exists but this session doesn't own it (see trash_photo).
+            rusqlite::Error::QueryReturnedNoRows => "photo/folder mismatch".into(),
+            e => e.to_string(),
+        })
 }
 
 #[tauri::command]
@@ -448,7 +492,10 @@ fn set_tags(
         .store
         .set_tags(folder_id, &photo_id, &tags)
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => "photo/folder mismatch".into(),
+            e => e.to_string(),
+        })
 }
 
 /// Restore both halves from the Trash. Tolerates halves the user already put

@@ -21,6 +21,14 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Another session that owns photos found by this folder's scan.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForeignOwner {
+    pub path: String,
+    pub count: usize,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FolderState {
@@ -451,6 +459,97 @@ impl Store {
         Ok(n > 0)
     }
 
+    /// Sessions (other folders) that own scanned photos. Photo identity is the
+    /// canonical-path hash, so opening an ancestor of an indexed folder finds
+    /// ids the DB already assigned elsewhere; those photos belong to the other
+    /// session's journal lane and must not be presented as fresh/unrated here.
+    pub fn foreign_owners(
+        &self,
+        folder_id: i64,
+        ids: &[&str],
+    ) -> rusqlite::Result<(Vec<ForeignOwner>, std::collections::HashSet<String>)> {
+        let conn = self.conn.lock().unwrap();
+        let mut by_folder: HashMap<String, usize> = HashMap::new();
+        let mut foreign_ids = std::collections::HashSet::new();
+        for chunk in ids.chunks(900) {
+            let marks = vec!["?"; chunk.len()].join(",");
+            let sql = format!(
+                "SELECT p.id, f.path FROM photos p JOIN folders f ON f.id = p.folder_id
+                 WHERE p.folder_id != ?1 AND p.id IN ({marks})"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let params_iter = std::iter::once(&folder_id as &dyn rusqlite::ToSql)
+                .chain(chunk.iter().map(|id| id as &dyn rusqlite::ToSql));
+            let rows = stmt.query_map(rusqlite::params_from_iter(params_iter), |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                let (id, path) = row?;
+                *by_folder.entry(path).or_default() += 1;
+                foreign_ids.insert(id);
+            }
+        }
+        let mut owners: Vec<ForeignOwner> = by_folder
+            .into_iter()
+            .map(|(path, count)| ForeignOwner { path, count })
+            .collect();
+        owners.sort_by(|a, b| b.count.cmp(&a.count).then(a.path.cmp(&b.path)));
+        Ok((owners, foreign_ids))
+    }
+
+    /// Photos whose rating exists only by adoption (no journal actions) — the
+    /// set whose files may still disagree with the DB verdict.
+    pub fn unjournaled_rated(&self, folder_id: i64) -> rusqlite::Result<Vec<(String, u8)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, rating FROM photos p
+             WHERE folder_id = ?1 AND rating > 0 AND trashed = 0 AND missing = 0
+             AND NOT EXISTS (SELECT 1 FROM actions a WHERE a.photo_id = p.id)",
+        )?;
+        let rows = stmt.query_map(params![folder_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u8))
+        })?;
+        rows.collect()
+    }
+
+    /// Queue an XMP write of a photo's current verdict (rating + tags), so the
+    /// file catches up with the DB — adoption write-through. No journal entry:
+    /// the verdict does not change, only the file's copy of it.
+    pub fn enqueue_xmp(&self, photo_id: &str) -> rusqlite::Result<bool> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let Some((rating, tags, jpeg, raf)) = tx
+            .query_row(
+                "SELECT rating, tags, jpeg_path, raf_path FROM photos
+                 WHERE id = ?1 AND trashed = 0",
+                params![photo_id],
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, Option<String>>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                    ))
+                },
+            )
+            .optional()?
+        else {
+            return Ok(false);
+        };
+        tx.execute("UPDATE xmp_seq SET seq = seq + 1", [])?;
+        tx.execute(
+            "INSERT INTO xmp_queue (photo_id, jpeg_path, raf_path, rating, tags, job_seq)
+             VALUES (?1, ?2, ?3, ?4, ?5, (SELECT seq FROM xmp_seq))
+             ON CONFLICT(photo_id) DO UPDATE SET
+               rating = excluded.rating, tags = excluded.tags,
+               job_seq = excluded.job_seq,
+               status = 'pending', attempts = 0, last_error = NULL",
+            params![photo_id, jpeg, raf, rating, tags],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     pub fn save_view(
         &self,
         folder_id: i64,
@@ -473,9 +572,12 @@ impl Store {
     pub fn set_rating(&self, folder_id: i64, photo_id: &str, to: u8) -> rusqlite::Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
+        // Ownership guard (same rule trash enforces in lib.rs): a verdict may
+        // only be written from the session that owns the photo, or the action
+        // lands in another folder's journal lane.
         let (from, jpeg, raf): (u8, Option<String>, Option<String>) = tx.query_row(
-            "SELECT rating, jpeg_path, raf_path FROM photos WHERE id = ?1",
-            params![photo_id],
+            "SELECT rating, jpeg_path, raf_path FROM photos WHERE id = ?1 AND folder_id = ?2",
+            params![photo_id, folder_id],
             |r| Ok((r.get::<_, i64>(0)? as u8, r.get(1)?, r.get(2)?)),
         )?;
         tx.execute(
@@ -521,8 +623,10 @@ impl Store {
         let tx = conn.transaction()?;
         let (from_json, rating, jpeg, raf): (Option<String>, i64, Option<String>, Option<String>) =
             tx.query_row(
-                "SELECT tags, rating, jpeg_path, raf_path FROM photos WHERE id = ?1",
-                params![photo_id],
+                // Ownership guard — see set_rating.
+                "SELECT tags, rating, jpeg_path, raf_path FROM photos
+                 WHERE id = ?1 AND folder_id = ?2",
+                params![photo_id, folder_id],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )?;
         let from: Vec<String> = from_json
@@ -1303,5 +1407,92 @@ mod tests {
         // The current job's completion clears it.
         s.xmp_done("a", fresh[0].job_seq).unwrap();
         assert_eq!(s.xmp_status().unwrap().pending, 0);
+    }
+
+    /// Regression (SD-card root open): a verdict written from a session that
+    /// does not own the photo must be refused — not silently applied to the
+    /// owning folder's row with the action journaled in the wrong lane.
+    #[test]
+    fn verdicts_refuse_cross_folder_writes() {
+        let s = mem_store();
+        let owner = s.open_folder("/tmp/x").unwrap();
+        s.sync_photos(owner.folder_id, &[entry("a", "A")]).unwrap();
+        s.set_rating(owner.folder_id, "a", 3).unwrap();
+        let ghost = s.open_folder("/tmp").unwrap(); // ancestor session, owns nothing
+
+        let err = s.set_rating(ghost.folder_id, "a", 5).unwrap_err();
+        assert!(matches!(err, rusqlite::Error::QueryReturnedNoRows));
+        let err = s
+            .set_tags(ghost.folder_id, "a", &["print".into()])
+            .unwrap_err();
+        assert!(matches!(err, rusqlite::Error::QueryReturnedNoRows));
+
+        // Nothing changed: rating intact, no action in the ghost's lane,
+        // no queue row beyond the owner's own write.
+        let (rows, _) = s.sync_photos(owner.folder_id, &[entry("a", "A")]).unwrap();
+        assert_eq!(rows["a"].rating, 3);
+        assert!(s.peek_undo(ghost.folder_id).unwrap().is_none());
+
+        // The owning session still works.
+        s.set_rating(owner.folder_id, "a", 5).unwrap();
+    }
+
+    #[test]
+    fn foreign_owners_partitions_by_session() {
+        let s = mem_store();
+        let owner = s.open_folder("/tmp/x").unwrap();
+        s.sync_photos(owner.folder_id, &[entry("a", "A"), entry("b", "B")])
+            .unwrap();
+        let root = s.open_folder("/tmp").unwrap();
+        // The root scan sees the same two photos plus one of its own.
+        s.sync_photos(
+            root.folder_id,
+            &[entry("a", "A"), entry("b", "B"), entry("n", "N")],
+        )
+        .unwrap();
+
+        let (owners, ids) = s.foreign_owners(root.folder_id, &["a", "b", "n"]).unwrap();
+        assert_eq!(ids.len(), 2, "only the other session's photos are foreign");
+        assert!(ids.contains("a") && ids.contains("b"));
+        assert_eq!(owners.len(), 1);
+        assert_eq!((owners[0].path.as_str(), owners[0].count), ("/tmp/x", 2));
+
+        // The new photo landed in the root session; from the owner's side the
+        // root now owns it.
+        let (owners, ids) = s.foreign_owners(owner.folder_id, &["a", "b", "n"]).unwrap();
+        assert_eq!(ids.into_iter().collect::<Vec<_>>(), vec!["n".to_string()]);
+        assert_eq!((owners[0].path.as_str(), owners[0].count), ("/tmp", 1));
+    }
+
+    /// Adoption write-through: enqueue_xmp queues the CURRENT verdict without
+    /// touching the journal, and refuses trashed/unknown photos.
+    #[test]
+    fn enqueue_xmp_queues_current_verdict_without_journal() {
+        let s = mem_store();
+        let f = s.open_folder("/tmp/x").unwrap();
+        s.sync_photos(f.folder_id, &[entry("a", "A"), entry("t", "T")])
+            .unwrap();
+        s.adopt_rating("a", 4).unwrap();
+
+        assert!(s.enqueue_xmp("a").unwrap());
+        let job = s.xmp_take_batch(8).unwrap().pop().unwrap();
+        assert_eq!((job.photo_id.as_str(), job.rating), ("a", 4));
+        assert!(
+            s.peek_undo(f.folder_id).unwrap().is_none(),
+            "write-through must not enter the undo lane"
+        );
+        assert_eq!(
+            s.unjournaled_rated(f.folder_id).unwrap(),
+            vec![("a".to_string(), 4)],
+            "adopted rating is unjournaled; untouched photos are not listed"
+        );
+
+        s.record_trash(f.folder_id, "t", &TrashPayload::default())
+            .unwrap();
+        assert!(!s.enqueue_xmp("t").unwrap(), "trashed photos are refused");
+        assert!(
+            !s.enqueue_xmp("missing").unwrap(),
+            "unknown ids are refused"
+        );
     }
 }

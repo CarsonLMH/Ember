@@ -44,7 +44,7 @@ import {
   type FilterMode,
   type SortMode,
 } from './order';
-import type { Delta, Photo } from './types';
+import type { Delta, ForeignOwner, Photo } from './types';
 
 /** Preload window, forward-biased; mirrored when culling backwards. */
 const AHEAD = 8;
@@ -93,6 +93,9 @@ export interface SessionState {
   sortedByCapture: boolean;
   trashedCount: number;
   missingCount: number;
+  /** Other sessions that own photos this folder's scan found (excluded from
+   * the list) — the UI offers a jump to them instead of showing ghosts. */
+  foreign: ForeignOwner[];
   xmpPending: number;
   /** Writes parked after repeated failures — visible until retried. */
   xmpFailed: number;
@@ -130,6 +133,7 @@ let state: SessionState = {
   sortedByCapture: false,
   trashedCount: 0,
   missingCount: 0,
+  foreign: [],
   xmpPending: 0,
   xmpFailed: 0,
   xmpLastError: null,
@@ -993,6 +997,7 @@ export async function openFolder(dir: string): Promise<void> {
       sortedByCapture: false,
       trashedCount: result.trashedCount,
       missingCount: result.missingCount,
+      foreign: result.foreign ?? [],
       currentRecipe: null,
       recipeFilter: null,
       personFilter: null,

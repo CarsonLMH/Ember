@@ -632,6 +632,17 @@ export default function App() {
             {state.missingCount > 0 && (
               <span className="hud-chip hud-warn">missing {state.missingCount}</span>
             )}
+            {state.foreign.length > 0 && (
+              <button
+                className="hud-trash-btn hud-warn"
+                title={state.foreign
+                  .map((f) => `${f.count} indexed under ${f.path}`)
+                  .join('\n')}
+                onClick={() => void session.openFolder(state.foreign[0].path)}
+              >
+                {state.foreign.reduce((n, f) => n + f.count, 0)} in another session
+              </button>
+            )}
             {state.xmpPending > 0 && <span className="hud-note">✎ {state.xmpPending} pending</span>}
             {state.xmpFailed > 0 && (
               <button
@@ -666,11 +677,30 @@ export default function App() {
 
         {state.folder && state.photos.length === 0 && !state.loading && (
           <div className="overlay-msg">
-            <div>
-              {state.all.length > 0
-                ? `No photos match the ${FILTER_LABEL[state.filter] ?? state.filter} filter.`
-                : `No photos to show${state.trashedCount > 0 ? ' (everything is trashed)' : ''}.`}
-            </div>
+            {state.foreign.length > 0 && state.all.length === 0 ? (
+              <>
+                <div className="overlay-title">Already indexed</div>
+                <div>The photos here belong to another session:</div>
+                {state.foreign.map((f, i) => (
+                  <button
+                    key={f.path}
+                    autoFocus={i === 0}
+                    onClick={() => void session.openFolder(f.path)}
+                  >
+                    Open {f.path} · {f.count} photos
+                  </button>
+                ))}
+                <div className="overlay-hint">
+                  Verdicts live with the session that first indexed the folder.
+                </div>
+              </>
+            ) : (
+              <div>
+                {state.all.length > 0
+                  ? `No photos match the ${FILTER_LABEL[state.filter] ?? state.filter} filter.`
+                  : `No photos to show${state.trashedCount > 0 ? ' (everything is trashed)' : ''}.`}
+              </div>
+            )}
           </div>
         )}
 

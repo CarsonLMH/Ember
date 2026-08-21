@@ -38,6 +38,13 @@ existing rating so verdicts made in other tools appear. Read order:
 Adoption never overwrites a verdict the user made inside Ember — the journal
 is authoritative once an action exists.
 
+Adoption writes through: when the adopted value is not already in the file's
+own XMP (e.g. it came from the xattr, which only Finder/Spotlight can see),
+Ember queues a normal XMP write so the file catches up. The check re-runs on
+every folder open, so adopted ratings from before this behavior existed are
+backfilled too. No journal action is recorded — the verdict doesn't change,
+only the file's copy of it.
+
 ## Durability semantics
 
 Verdicts are acknowledged only after landing in Ember's append-only local

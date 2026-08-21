@@ -54,6 +54,7 @@ vi.mock('./ipc', async (importOriginal) => {
       },
       trashedCount: 0,
       missingCount: 0,
+      foreign: [],
       dir,
     })),
     onFacesProgress: vi.fn(async (cb: (p: FacesProgress) => void) => {

@@ -25,11 +25,19 @@ export interface FolderState {
   cursorPhoto: string | null;
 }
 
+/** Another session (folder) that owns photos found by this folder's scan. */
+export interface ForeignOwner {
+  path: string;
+  count: number;
+}
+
 export interface ScanResult {
   photos: Photo[];
   state: FolderState;
   trashedCount: number;
   missingCount: number;
+  /** Owning sessions for photos excluded from `photos` — see ForeignOwner. */
+  foreign: ForeignOwner[];
 }
 
 export interface Delta {

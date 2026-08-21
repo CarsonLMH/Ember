@@ -231,6 +231,13 @@ pub fn read_rating(jpeg: Option<&Path>, raf: Option<&Path>) -> Option<u8> {
             return Some(r);
         }
     }
+    read_file_rating(jpeg, raf)
+}
+
+/// The rating other tools can actually see: sidecar/embedded XMP only, no
+/// xattr. Adoption write-through compares this against the DB verdict to
+/// decide whether a file needs a queued XMP write.
+pub fn read_file_rating(jpeg: Option<&Path>, raf: Option<&Path>) -> Option<u8> {
     for f in [raf, jpeg].into_iter().flatten() {
         let sidecar = sidecar_path(f);
         if let Ok(text) = std::fs::read_to_string(&sidecar) {
@@ -642,6 +649,14 @@ mod tests {
         assert_eq!(read_xattr_rating(&f), Some(4));
         // xattr wins over embedded/sidecar (ApolloOne's live value).
         assert_eq!(read_rating(Some(&f), None), Some(4));
+        // …but read_file_rating deliberately ignores it: it reports what
+        // XMP-reading tools can see, which is nothing yet.
+        assert_eq!(read_file_rating(Some(&f), None), None);
+        // A sidecar is file-visible.
+        std::fs::write(sidecar_path(&f), minimal_sidecar(2, None)).unwrap();
+        assert_eq!(read_file_rating(Some(&f), None), Some(2));
+        assert_eq!(read_rating(Some(&f), None), Some(4), "xattr still wins");
+        std::fs::remove_file(sidecar_path(&f)).unwrap();
 
         // Parses ApolloOne's own bplist encoding (integer payload).
         let mut buf = Vec::new();
