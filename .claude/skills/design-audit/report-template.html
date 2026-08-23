@@ -1,0 +1,183 @@
+<title>{{TITLE}}</title>
+<!-- Design-audit report skeleton. Fill every {{UPPER}} placeholder; build_report.py refuses to ship with one left. Delete example blocks you do not use. Favicon for every design audit: 🪞 -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #f7f5f2; --panel: #ffffff; --ink: #1b1917; --muted: #6d6762; --line: #e4dfd9;
+    --accent: #b4561d; --accent-ink: #ffffff;
+    --crit: #b83a3a; --crit-bg: #fbeaea; --major: #9a6512; --major-bg: #fbf0da; --minor: #6d6762; --minor-bg: #efebe6;
+    --bug: #3f5f9e; --bug-bg: #e7edf8; --code-bg: #f0ece7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141210; --panel: #1c1917; --ink: #ebe6e0; --muted: #9b938b; --line: #2e2925;
+      --accent: #e5905a; --accent-ink: #141210;
+      --crit: #e07070; --crit-bg: #33201f; --major: #e8a33d; --major-bg: #332a1a; --minor: #9b938b; --minor-bg: #26221f;
+      --bug: #8fb0e8; --bug-bg: #1e2533; --code-bg: #231f1c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141210; --panel: #1c1917; --ink: #ebe6e0; --muted: #9b938b; --line: #2e2925;
+    --accent: #e5905a; --accent-ink: #141210;
+    --crit: #e07070; --crit-bg: #33201f; --major: #e8a33d; --major-bg: #332a1a; --minor: #9b938b; --minor-bg: #26221f;
+    --bug: #8fb0e8; --bug-bg: #1e2533; --code-bg: #231f1c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: "IBM Plex Sans", -apple-system, "Helvetica Neue", Arial, sans-serif; font-size: 15px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  code, .mono { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.86em; }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  a { color: var(--accent); }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 48px 24px 96px; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 24px; margin-bottom: 36px; }
+  .eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  h1 { font-size: 34px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 10px; line-height: 1.15; text-wrap: balance; }
+  .meta { color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; }
+  h2 { font-size: 22px; font-weight: 600; margin: 48px 0 14px; letter-spacing: -0.005em; text-wrap: balance; }
+  h3 { font-size: 16px; font-weight: 600; margin: 28px 0 8px; }
+  p { margin: 0 0 12px; max-width: 68ch; }
+  ul { padding-left: 20px; margin: 0 0 12px; max-width: 68ch; } li { margin-bottom: 4px; }
+
+  .verdict { font-size: 18px; line-height: 1.5; max-width: 60ch; margin-bottom: 20px; }
+  .score { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; margin: 0 0 8px; }
+  .score div { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; }
+  .score b { display: block; font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .score span { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .score .c b { color: var(--crit); } .score .m b { color: var(--major); } .score .b b { color: var(--bug); }
+
+  .root { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; margin-bottom: 8px; }
+  .root div { background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--accent); border-radius: 6px; padding: 14px 16px; }
+  .root h3 { margin: 0 0 6px; font-size: 15px; }
+  .root p { font-size: 14px; margin: 0 0 8px; }
+  .root p:last-child { margin: 0; color: var(--muted); }
+  .root em { font-style: normal; color: var(--ink); font-weight: 500; }
+
+  .finding { display: grid; grid-template-columns: minmax(0,1fr) 250px; gap: 20px; padding: 20px 0; border-top: 1px solid var(--line); }
+  .finding.wide { grid-template-columns: 1fr; }
+  .finding.noimg { grid-template-columns: 1fr; }
+  .finding .id { font-family: "IBM Plex Mono", ui-monospace, monospace; color: var(--muted); font-size: 12px; margin-right: 8px; }
+  .finding h3 { margin: 0 0 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .chip { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; padding: 2px 7px; border-radius: 3px; line-height: 1.4; }
+  .chip.crit { color: var(--crit); background: var(--crit-bg); } .chip.major { color: var(--major); background: var(--major-bg); }
+  .chip.minor { color: var(--minor); background: var(--minor-bg); } .chip.bug { color: var(--bug); background: var(--bug-bg); }
+  .size { font-size: 12px; color: var(--muted); font-weight: 500; margin-left: auto; }
+  .ev { font-size: 14px; color: var(--muted); margin: 0 0 10px; }
+  .ev b { color: var(--ink); font-weight: 500; }
+  .fix { font-size: 14px; margin: 0; } .fix b { font-weight: 600; }
+  figure { margin: 0; }
+  figure img { max-width: 100%; height: auto; display: block; border: 1px solid var(--line); border-radius: 4px; background: #111; }
+  figcaption { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .finding.wide figure { margin-bottom: 14px; }
+
+  .slices { counter-reset: s; padding: 0; list-style: none; max-width: none; }
+  .slices li { display: grid; grid-template-columns: 44px minmax(0,1fr); gap: 14px; padding: 14px 0; border-top: 1px solid var(--line); }
+  .slices li::before { counter-increment: s; content: counter(s); font-family: "IBM Plex Mono", monospace; font-size: 22px; color: var(--accent); line-height: 1.1; }
+  .slices b { display: block; margin-bottom: 4px; }
+  .slices p { font-size: 14px; margin: 0 0 6px; }
+  .slices .after { color: var(--muted); }
+  .quick { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; padding: 14px 18px; margin: 14px 0 0; }
+  .quick ul { margin: 6px 0 0; font-size: 14px; }
+  .leave li { font-size: 14px; }
+  .limits { font-size: 14px; color: var(--muted); }
+  @media (max-width: 720px) { .finding, .score, .root { grid-template-columns: 1fr; } .finding figure { order: -1; } }
+</style>
+
+<div class="wrap">
+<header>
+  <p class="eyebrow">Ember · design audit</p>
+  <h1>{{TITLE}}</h1>
+  <p class="meta"><span>Captured from the live dev build through the MCP bridge</span><span>Folder: {{FOLDER}} ({{FOLDER_FACTS}})</span><span>{{DATE}}</span></p>
+</header>
+
+<!-- Verdict: three sentences. What works, what the structural problem is, what fixing it buys. -->
+<p class="verdict">{{VERDICT}}</p>
+
+<div class="score">
+  <div class="c"><b>{{N_CRIT}}</b><span>Critical</span></div>
+  <div class="m"><b>{{N_MAJOR}}</b><span>Major</span></div>
+  <div><b>{{N_MINOR}}</b><span>Minor</span></div>
+  <div class="b"><b>{{N_BUG}}</b><span>Bug, not design</span></div>
+</div>
+
+<!-- Root causes: 2–4 structural things most findings trace back to. Each: what it is (measured), what it should be. -->
+<h2>Root causes</h2>
+<div class="root">
+  <div><h3>A · {{ROOT_A_TITLE}}</h3><p>{{ROOT_A_EVIDENCE}}</p><p><em>Should be:</em> {{ROOT_A_TARGET}}</p></div>
+  <div><h3>B · {{ROOT_B_TITLE}}</h3><p>{{ROOT_B_EVIDENCE}}</p><p><em>Should be:</em> {{ROOT_B_TARGET}}</p></div>
+  <div><h3>C · {{ROOT_C_TITLE}}</h3><p>{{ROOT_C_EVIDENCE}}</p><p><em>Should be:</em> {{ROOT_C_TARGET}}</p></div>
+</div>
+
+<!-- Findings, grouped by sub-surface. Three layouts:
+     .finding           text left, portrait crop right
+     .finding.wide      landscape crop above, text below
+     .finding.noimg     text only
+     Severity chips: crit | major | minor | bug.  Size: CSS · component · redesign · Rust.
+     Evidence tag in the size slot: "verified live" / "measured" / "from code" and the skill that surfaced it. -->
+<h2>{{SUBSURFACE_1}}</h2>
+
+<div class="finding">
+  <div>
+    <h3><span class="id">F1</span><span class="chip crit">Critical</span>{{F1_TITLE}} <span class="size">{{F1_SIZE}} · measured</span></h3>
+    <p class="ev">Measured: {{F1_EVIDENCE}}</p>
+    <p class="fix"><b>Fix:</b> {{F1_FIX}}</p>
+  </div>
+  <figure><img src="{{IMG:c1}}" alt="{{F1_ALT}}"><figcaption>{{F1_CAPTION}}</figcaption></figure>
+</div>
+
+<div class="finding wide">
+  <figure><img src="{{IMG:c2}}" alt="{{F2_ALT}}"><figcaption>{{F2_CAPTION}}</figcaption></figure>
+  <div>
+    <h3><span class="id">F2</span><span class="chip major">Major</span>{{F2_TITLE}} <span class="size">{{F2_SIZE}} · verified live</span></h3>
+    <p class="ev">{{F2_EVIDENCE}}</p>
+    <p class="fix"><b>Fix:</b> {{F2_FIX}}</p>
+  </div>
+</div>
+
+<div class="finding noimg">
+  <div>
+    <h3><span class="id">F3</span><span class="chip minor">Minor</span>{{F3_TITLE}} <span class="size">{{F3_SIZE}} · from code</span></h3>
+    <p class="ev">{{F3_EVIDENCE}}</p>
+    <p class="fix"><b>Fix:</b> {{F3_FIX}}</p>
+  </div>
+</div>
+
+<div class="finding noimg">
+  <div>
+    <h3><span class="id">B1</span><span class="chip bug">Bug</span>{{B1_TITLE}} <span class="size">Rust · separate ticket</span></h3>
+    <p class="ev">{{B1_EVIDENCE}}</p>
+  </div>
+</div>
+
+<!-- Slices: ordered, each driveable alone on real photos, each names the findings it closes. -->
+<h2>Proposed slices</h2>
+<p>Ordered so each one is driveable on real photos and can ship alone.</p>
+<ol class="slices">
+  <li><div><b>{{SLICE_1_TITLE}} ({{SLICE_1_CLOSES}})</b><p>{{SLICE_1_WHAT}}</p><p class="after">After: {{SLICE_1_AFTER}}</p></div></li>
+  <li><div><b>{{SLICE_2_TITLE}} ({{SLICE_2_CLOSES}})</b><p>{{SLICE_2_WHAT}}</p><p class="after">After: {{SLICE_2_AFTER}}</p></div></li>
+</ol>
+
+<div class="quick">
+  <b>Could ship today, CSS only</b>
+  <ul>
+    <li>{{QUICK_1}}</li>
+  </ul>
+</div>
+
+<!-- Required: every skill rule the brief overrides, with the rule cited, so nobody "fixes" it later. -->
+<h2>Deliberately left alone</h2>
+<ul class="leave">
+  <li><b>System font, zero animation, dark-only, flat grounds.</b> The brief says so; the skills that push otherwise are overruled.</li>
+  <li>{{LEFT_ALONE_SPECIFIC}}</li>
+</ul>
+
+<!-- Required when skills disagree with each other or with an existing app convention. Recommend; don't decide. -->
+<div class="quick">
+  <b>Decision needed: {{DECISION_TITLE}}</b>
+  <p style="margin:6px 0 0;font-size:14px">{{DECISION_BODY}}</p>
+</div>
+
+<!-- Required. Say exactly which skills ran (by Skill tool), which checks were live, which were from code, which could not be completed and why, and every side effect on user data. -->
+<h2>Method and limits</h2>
+<p class="limits"><b>Captures.</b> Every screenshot was taken from the live dev build through the MCP bridge (WKWebView snapshot); every number is a computed style, bounding box or DOM count — not estimated from pixels. Folder: {{FOLDER}}; photo(s): {{PHOTOS}}.</p>
+<p class="limits"><b>Lenses.</b> AGENTS.md design brief first. Skills run with the Skill tool in this audit: {{SKILLS_RUN}}. Applied from memory, not run: {{SKILLS_FROM_MEMORY}}.</p>
+<p class="limits"><b>Not captured live, reviewed from code only:</b> {{FROM_CODE_ONLY}} — reaching them would have changed user data. Could not be verified at all: {{UNVERIFIABLE}}. Side effects of the audit: {{SIDE_EFFECTS}}. No verdicts, names, rejections or settings were touched. Design review only; nothing here touches the flip path.</p>
+</div>
