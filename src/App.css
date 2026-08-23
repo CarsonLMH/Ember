@@ -227,6 +227,16 @@ body,
   color: #888;
 }
 
+/* Build stamp: which code this binary contains (see CHANGELOG.md). */
+.cheat-footer {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid #2a2a2a;
+  font-size: 11px;
+  color: #888;
+  font-variant-numeric: tabular-nums;
+}
+
 .cheat-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

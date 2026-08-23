@@ -117,6 +117,17 @@ export function getMetadata(photoId: string): Promise<string | null> {
   return invoke<string | null>('get_metadata', { photoId });
 }
 
+export interface BuildInfo {
+  version: string;
+  /** Short git hash the binary was built from; "+" suffix = uncommitted changes. */
+  commit: string;
+  builtAt: string;
+}
+
+export function buildInfo(): Promise<BuildInfo> {
+  return invoke<BuildInfo>('build_info');
+}
+
 export interface FocusMapOut {
   /** User-set line from settings.toml `[focus] soft_threshold`; null = scores
    * display only (Ember never judges on its own). */

@@ -56,6 +56,12 @@ macOS photo-culling app (Tauri 2 + Rust + React/TS). **Read SPEC.md first** — 
 ## Conventions
 
 - Small conventional commits (`feat:`, `fix:`, `perf:`, `test:`, `docs:`); commit at every working milestone.
+- **Every user-visible change adds a line to CHANGELOG.md, in the same commit**,
+  under the top version heading. The `?` cheat-sheet footer shows the build
+  stamp (version · commit · build date, from build.rs) — that pair is how the
+  user tells what shipped. Bump the version (package.json, tauri.conf.json,
+  Cargo.toml + lockfiles) and start a new heading only at an accepted
+  milestone; dev-only changes get a "Dev-only:" line or none.
 - Rust: clippy-clean, `cargo fmt`. TS: strict mode, no `any` in the image/cache/journal paths.
 - Code stays clean and conventional (possible future open-sourcing) but built for exactly one user — no speculative abstractions.
 

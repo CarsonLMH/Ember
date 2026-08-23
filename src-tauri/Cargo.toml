@@ -1,6 +1,6 @@
 [package]
 name = "ember"
-version = "1.0.0"
+version = "1.4.0"
 description = "Fast macOS photo culling for Fujifilm JPEG+RAF pairs"
 authors = ["Carson Leung"]
 license = "MIT"

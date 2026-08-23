@@ -921,6 +921,18 @@ fn save_perf_report(app: tauri::AppHandle, report: serde_json::Value) -> Result<
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// Build stamp for the ? cheat-sheet footer: which code this binary actually
+/// contains (version · commit · build time; "+" = built with uncommitted
+/// changes). Compare against CHANGELOG.md to know what shipped.
+#[tauri::command]
+fn build_info() -> serde_json::Value {
+    serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "commit": env!("EMBER_GIT_COMMIT"),
+        "builtAt": env!("EMBER_BUILD_TIME"),
+    })
+}
+
 /// Dev/test hooks: EMBER_OPEN=<folder> auto-opens it on launch;
 /// EMBER_STORM=1 runs the flip-storm harness and exits;
 /// EMBER_CHAOS=1 rates/flips continuously (kill -9 target);
@@ -1509,7 +1521,8 @@ pub fn run() {
             delete_person,
             clear_auto_assignments,
             quit_app,
-            frontend_log
+            frontend_log,
+            build_info
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
