@@ -30,6 +30,10 @@ macOS photo-culling app (Tauri 2 + Rust + React/TS). **Read SPEC.md first** — 
   run, never a ship build (the shipped .app is `--debug`, so the feature flag,
   not `debug_assertions`, is what keeps it out).
 - `npm run tauri build` — release `.app` (install to /Applications at stable milestones).
+- `npm run e2e:build && npm run e2e` — synthetic Tauri harness, including axe
+  accessibility and reviewed chrome snapshots; never touches the real Ember DB.
+- `npm run e2e:visual:update` — explicitly replace visual baselines only after
+  inspecting `e2e/.visual-output/actual/` and deciding the UI change is correct.
 - `cd src-tauri && cargo test` — Rust unit tests (pairing, journal replay, recipe matcher).
 - `cd src-tauri && cargo clippy && cargo fmt` — must be clean before commit.
 

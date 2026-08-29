@@ -13,6 +13,8 @@
     "tauri:mcp": "tauri dev --features mcp --config src-tauri/tauri.mcp.conf.json",
     "e2e:build": "VITE_E2E=1 tauri build --debug --no-bundle --features e2e --config src-tauri/tauri.e2e.conf.json",
     "e2e": "wdio run e2e/wdio.conf.ts",
+    "e2e:visual": "wdio run e2e/wdio.conf.ts --spec e2e/specs/07-visual.e2e.ts",
+    "e2e:visual:update": "EMBER_UPDATE_VISUAL_BASELINES=1 npm run e2e:visual",
     "e2e:perf": "EMBER_E2E_PERF=1 wdio run e2e/wdio.conf.ts"
   },
   "dependencies": {
@@ -35,6 +37,7 @@
     "@wdio/spec-reporter": "^9.30.1",
     "@wdio/tauri-plugin": "^1.3.0",
     "@wdio/tauri-service": "^1.3.0",
+    "@wdio/visual-service": "^9.3.0",
     "tsx": "^4.23.11",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",

@@ -32,6 +32,7 @@ perf-reports/
 
 # e2e harness artifacts
 e2e/fixtures/
+e2e/.visual-output/
 
 # Agent-local state
 CLAUDE.local.md

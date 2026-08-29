@@ -17,6 +17,14 @@ import {
 // EMBER_E2E_PERF=1 (npm run e2e:perf) switches to the perf gate: only the
 // 05 spec, against the big storm fixture set, on a machine that must be quiet.
 const PERF = process.env.EMBER_E2E_PERF === '1';
+const UPDATE_VISUAL_BASELINES = process.env.EMBER_UPDATE_VISUAL_BASELINES === '1';
+
+// visual-service v9 checks argv inside each worker, while WDIO does not pass
+// unknown CLI flags through to those workers. The explicit npm update command
+// carries an env marker, and every process reconstructs the supported flag.
+if (UPDATE_VISUAL_BASELINES && !process.argv.includes('--update-visual-baseline')) {
+  process.argv.push('--update-visual-baseline');
+}
 
 // The spawned app inherits this process's environment; EMBER_OPEN makes every
 // session (including durability relaunches) open the fixture folder on boot.
@@ -31,7 +39,7 @@ const sandboxDirs = [
 
 export const config: WebdriverIO.Config = {
   runner: 'local',
-  specs: PERF ? ['./specs/05-perf-signal.e2e.ts'] : ['./specs/0[1-46]-*.e2e.ts'],
+  specs: PERF ? ['./specs/05-perf-signal.e2e.ts'] : ['./specs/0[1-47]-*.e2e.ts'],
   maxInstances: 1,
   capabilities: [
     {
@@ -53,7 +61,24 @@ export const config: WebdriverIO.Config = {
         startTimeout: 90_000,
       },
     ],
-  ],
+    ...(PERF
+      ? []
+      : [
+          [
+            '@wdio/visual-service',
+            {
+              baselineFolder: path.join(rootDir, 'e2e', 'visual-baselines'),
+              screenshotPath: path.join(rootDir, 'e2e', '.visual-output'),
+              formatImageName: '{tag}-{browserName}-{width}x{height}',
+              autoSaveBaseline: UPDATE_VISUAL_BASELINES,
+              alwaysSaveActualImage: true,
+              disableCSSAnimation: true,
+              waitForFontsLoaded: true,
+              compareOptions: { ignoreAntialiasing: true },
+            },
+          ],
+        ]),
+  ] as WebdriverIO.Config['services'],
   framework: 'mocha',
   mochaOpts: { ui: 'bdd', timeout: 240_000 },
   reporters: ['spec'],
