@@ -113,6 +113,9 @@ export default function Filmstrip({
     <div
       ref={ref}
       className="filmstrip"
+      role="region"
+      aria-label="Photo filmstrip"
+      tabIndex={0}
       onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
     >
       <div className="strip-inner" style={{ height: photos.length * ROW }}>

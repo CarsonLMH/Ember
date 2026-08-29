@@ -8,6 +8,8 @@ when in doubt, ask a session to rebuild.
 
 ## 1.4.0 — 2026-08-23
 
+- The filmstrip can receive keyboard focus, so keyboard and assistive-technology
+  users can reach and scroll it.
 - **Focus check**: every photo gets a sharpness score measured at the camera's
   autofocus point, shown as a dim `AF n` chip in the HUD (higher = sharper;
   compare within a burst, not across scenes) and an Autofocus section in the
