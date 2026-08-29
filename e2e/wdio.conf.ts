@@ -39,7 +39,13 @@ const sandboxDirs = [
 
 export const config: WebdriverIO.Config = {
   runner: 'local',
-  specs: PERF ? ['./specs/05-perf-signal.e2e.ts'] : ['./specs/0[1-47]-*.e2e.ts'],
+  specs: PERF
+    ? ['./specs/05-perf-signal.e2e.ts']
+    : [
+        './specs/0[1-4]-*.e2e.ts',
+        './specs/06-accessibility.e2e.ts',
+        './specs/07-visual.e2e.ts',
+      ],
   maxInstances: 1,
   capabilities: [
     {
