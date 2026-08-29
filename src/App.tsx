@@ -188,26 +188,34 @@ function TrashPanel({ folderId, onClose }: { folderId: number; onClose: () => vo
   };
 
   return (
-    <div className="trash-panel">
-      <div className="trash-head">
-        <span>Trashed this folder</span>
-        <button onClick={onClose}>close</button>
+    <aside className="dock" aria-label="Trash">
+      <header className="dock-head">
+        <span className="dock-title">Trash</span>
+        <span className="dock-status" aria-live="polite">
+          {items === null ? 'Loading…' : `${items.length} trashed this folder`}
+        </span>
+        <button className="dock-close" aria-label="Close" title="Close (Esc)" onClick={onClose}>
+          ×
+        </button>
+      </header>
+      <div className="dock-body">
+        {items?.length === 0 && (
+          <div className="trash-empty">Nothing in the Trash from this folder.</div>
+        )}
+        <ul className="trash-list">
+          {items?.map((t) => (
+            <li key={t.id}>
+              <img className="trash-thumb" src={previewUrl(t.id)} loading="lazy" alt={t.stem} />
+              <div className="trash-meta">
+                <span className="trash-stem">{t.stem}</span>
+                {t.rating > 0 && <span className="trash-stars">{'★'.repeat(t.rating)}</span>}
+              </div>
+              <button onClick={() => void restore(t.id)}>Restore</button>
+            </li>
+          ))}
+        </ul>
       </div>
-      {items === null && <div className="trash-empty">loading…</div>}
-      {items?.length === 0 && <div className="trash-empty">Nothing in the Trash from this folder.</div>}
-      <ul>
-        {items?.map((t) => (
-          <li key={t.id}>
-            <img className="trash-thumb" src={previewUrl(t.id)} loading="lazy" alt={t.stem} />
-            <div className="trash-meta">
-              <span className="trash-stem">{t.stem}</span>
-              {t.rating > 0 && <span className="trash-stars">{'★'.repeat(t.rating)}</span>}
-            </div>
-            <button onClick={() => void restore(t.id)}>restore</button>
-          </li>
-        ))}
-      </ul>
-    </div>
+    </aside>
   );
 }
 
@@ -215,8 +223,10 @@ export default function App() {
   const state = useSyncExternalStore(session.subscribe, session.getState);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [showPerf, setShowPerf] = useState(false);
-  const [showTrash, setShowTrash] = useState(false);
-  const [showPeople, setShowPeople] = useState(false);
+  // The right column holds one dock at a time — People or Trash — and an open
+  // dock takes the metadata panel's place (owner decision 2026-08-29: replace,
+  // not stack); `showExif` is remembered underneath and returns on close.
+  const [dock, setDock] = useState<'people' | 'trash' | null>(null);
   const [showCheat, setShowCheat] = useState(false);
   const [showRecipes, setShowRecipes] = useState(false);
   const [showTagPalette, setShowTagPalette] = useState(false);
@@ -232,6 +242,8 @@ export default function App() {
   const overlayOpenRef = useRef(false);
   overlayOpenRef.current =
     showRecipes || showTagPalette || showTagFilter || showPersonFilter;
+  const dockRef = useRef(dock);
+  dockRef.current = dock;
   const [showStrip, setShowStrip] = useState(localStorage.getItem('filmstrip') !== '0');
   const [showFaces, setShowFaces] = useState(localStorage.getItem('faceBadges') !== '0');
   const [showExif, setShowExif] = useState(localStorage.getItem('exifPanel') === '1');
@@ -282,8 +294,7 @@ export default function App() {
       if (overlayOpenRef.current) return;
       if (e.key === 'Escape') {
         setShowCheat(false);
-        setShowTrash(false);
-        setShowPeople(false);
+        setDock(null);
         return;
       }
       const action = actionFor(e);
@@ -347,10 +358,17 @@ export default function App() {
           toggleStrip();
           break;
         case 'exif_panel':
-          setShowExif((v) => {
-            localStorage.setItem('exifPanel', v ? '0' : '1');
-            return !v;
-          });
+          if (dockRef.current !== null) {
+            // A dock has the column: `i` means "show me the metadata".
+            setDock(null);
+            setShowExif(true);
+            localStorage.setItem('exifPanel', '1');
+          } else {
+            setShowExif((v) => {
+              localStorage.setItem('exifPanel', v ? '0' : '1');
+              return !v;
+            });
+          }
           break;
         case 'refresh':
           void session.refresh();
@@ -368,8 +386,7 @@ export default function App() {
           setShowTagFilter((v) => !v);
           break;
         case 'people_panel':
-          setShowPeople((v) => !v);
-          setShowTrash(false); // same dock — one panel at a time
+          setDock((d) => (d === 'people' ? null : 'people'));
           break;
         case 'person_filter':
           setShowPersonFilter((v) => !v);
@@ -655,11 +672,8 @@ export default function App() {
             )}
             <button
               className="hud-trash-btn"
-              onClick={() => {
-                setShowTrash((v) => !v);
-                setShowPeople(false); // same dock — one panel at a time
-              }}
-              disabled={state.trashedCount === 0 && !showTrash}
+              onClick={() => setDock((d) => (d === 'trash' ? null : 'trash'))}
+              disabled={state.trashedCount === 0 && dock !== 'trash'}
             >
               trashed {state.trashedCount}
             </button>
@@ -720,7 +734,7 @@ export default function App() {
         )}
       </div>
 
-      {showExif && photo && (
+      {dock === null && showExif && photo && (
         <ExifPanel
           photoId={photo.id}
           recipe={state.currentRecipe}
@@ -729,10 +743,10 @@ export default function App() {
         />
       )}
 
-      {showTrash && state.folderId !== null && (
-        <TrashPanel folderId={state.folderId} onClose={() => setShowTrash(false)} />
+      {dock === 'trash' && state.folderId !== null && (
+        <TrashPanel folderId={state.folderId} onClose={() => setDock(null)} />
       )}
-      {showPeople && state.folderId !== null && (
+      {dock === 'people' && state.folderId !== null && (
         <PeoplePanel
           // Keyed by folder: a folder change REMOUNTS the panel, so its
           // folder-scoped state (rows, selections, prompts, in-flight loads)
@@ -741,7 +755,7 @@ export default function App() {
           folderId={state.folderId}
           trashedCount={state.trashedCount}
           peopleVersion={state.peopleVersion}
-          onClose={() => setShowPeople(false)}
+          onClose={() => setDock(null)}
           notify={(m) => session.notify(m)}
           onJump={(id) => session.jumpToPhotoId(id)}
         />

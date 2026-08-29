@@ -1,3 +1,21 @@
+/* Tokens (AGENTS.md "Design language"). Neutral grays are the calibrated
+   viewing surround; the four semantics are the only non-neutral inks — colour
+   in chrome means something or it isn't there. Rules outside the surfaces
+   that have been migrated still carry literals (known debt: migrate an area
+   when a slice already touches it, never in a bulk restyle). */
+:root {
+  --bg: #141414;
+  --panel: #101010;
+  --ink: #ddd;
+  --muted: #888;
+  --line: #262626;
+  --hover: #1c1c1c;
+  --select: #6ea8ff;
+  --gold: #f5c518;
+  --warn: #e8a33d;
+  --danger: #e07070;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -360,33 +378,105 @@ kbd {
   color: #eaa;
 }
 
-.trash-panel {
-  position: absolute;
-  top: 44px;
-  right: 12px;
-  width: 260px;
-  max-height: 70%;
-  overflow-y: auto;
-  background: rgba(20, 20, 20, 0.94);
-  border: 1px solid #333;
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-size: 12px;
-}
+/* ---------- right-column dock (People, Trash) ----------
+   A real sidebar like the metadata panel — opaque, full height, its own
+   scroll — never a card floating over it. One dock at a time (App.tsx).
+   Flex column + scrolling body is the sticky header/footer; no `sticky`. */
 
-.trash-head {
+.dock {
+  width: 300px;
+  flex-shrink: 0;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-weight: 600;
-  margin-bottom: 8px;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
-.trash-panel ul {
+.dock-head {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.dock-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.dock-status {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Scan progress under the header: a width, not a motion. */
+.dock-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+}
+
+.dock-progress > div {
+  height: 100%;
+  background: var(--muted);
+}
+
+.dock-close {
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  padding: 0 5px;
+  font-size: 15px;
+  line-height: 18px;
+  color: var(--muted);
+}
+
+.dock-close:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+
+.dock-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 12px;
+}
+
+.dock-foot {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.dock ul {
   list-style: none;
 }
 
-.trash-panel li {
+.dock :focus-visible {
+  outline: 1px solid var(--select);
+  outline-offset: 1px;
+}
+
+.trash-list li {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -422,52 +512,73 @@ kbd {
 }
 
 .trash-empty {
-  color: #888;
+  color: var(--muted);
   padding: 6px 0;
 }
 
-/* People panel (faces) — shares the trash panel shell. */
-.people-panel {
-  width: 300px;
-}
+/* ---------- People (faces) ---------- */
 
 .people-section {
   margin: 10px 0 4px;
-  color: #999;
+  color: var(--muted);
   font-weight: 600;
   text-transform: uppercase;
   font-size: 10px;
   letter-spacing: 0.06em;
 }
 
-.people-progress {
-  color: #9ac;
-  padding: 2px 0 6px;
-}
-
 .people-error {
-  color: #eaa;
+  color: var(--danger);
   padding: 2px 0 6px;
 }
 
-.people-person {
+/* A person: one row (expand button + actions), faces below when open. The
+   row is a plain container — the name is the expand button's label, rename
+   swaps in a sibling input — so nothing interactive ever nests in a button. */
+.person {
+  display: flex;
   flex-direction: column;
-  align-items: stretch !important;
-  gap: 4px !important;
+  gap: 2px;
 }
 
-.people-row {
+.person-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 4px;
+}
+
+.person-row:hover,
+.person-row:focus-within {
+  background: var(--hover);
+}
+
+.person-expand {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
   background: none;
-  border: none;
+  border: 0;
+  border-radius: 4px;
+  padding: 3px 6px;
   color: inherit;
   font: inherit;
-  padding: 2px 0;
-  cursor: pointer;
   text-align: left;
-  width: 100%;
+}
+
+.person-expand:hover {
+  background: none;
+}
+
+.person-actions {
+  opacity: 0;
+}
+
+.person-row:hover .person-actions,
+.person-row:focus-within .person-actions {
+  opacity: 1;
 }
 
 .face-chip {
@@ -494,7 +605,7 @@ kbd {
 }
 
 .people-count {
-  color: #888;
+  color: var(--muted);
 }
 
 .people-faces {
@@ -530,26 +641,28 @@ kbd {
 }
 
 .people-cluster {
+  display: flex;
   flex-direction: column;
-  align-items: stretch !important;
-  gap: 4px !important;
-  border-top: 1px solid #2a2a2a;
-  padding-top: 8px !important;
+  gap: 4px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
 }
 
 .people-input {
-  background: #1a1a1a;
-  border: 1px solid #333;
+  background: var(--hover);
+  border: 1px solid var(--line);
   border-radius: 4px;
-  color: #ddd;
+  color: var(--ink);
   font-size: 12px;
   padding: 4px 6px;
   width: 100%;
 }
 
+/* The border is the field's focus ring — selection blue, the one place the
+   brief's blue is exactly right. */
 .people-input:focus {
   outline: none;
-  border-color: #567;
+  border-color: var(--select);
 }
 
 .people-toast {
@@ -564,23 +677,23 @@ kbd {
   border-radius: 6px;
 }
 
-.people-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 10px;
-  padding: 8px 0 6px;
-  border-top: 1px solid #2a2a2a;
-}
-
 .people-danger {
-  color: #daa;
+  color: var(--danger);
 }
 
+/* Quiet text actions: no button chrome, muted until hovered. */
 .people-dim {
-  color: #777;
-  font-size: 11px;
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  padding: 2px 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.people-dim:hover {
+  background: var(--hover);
+  color: var(--ink);
 }
 
 .face-chip-link {
@@ -598,17 +711,17 @@ kbd {
 .people-more {
   align-self: center;
   background: none;
-  border: 1px solid #333;
+  border: 1px solid var(--line);
   border-radius: 12px;
-  color: #999;
+  color: var(--muted);
   font-size: 11px;
   padding: 3px 8px;
   cursor: pointer;
 }
 
 .people-more:hover {
-  border-color: #567;
-  color: #bbb;
+  border-color: var(--muted);
+  color: var(--ink);
 }
 
 .people-cluster-row {
@@ -621,7 +734,7 @@ kbd {
 .people-loose {
   margin-top: 10px;
   padding-top: 8px;
-  border-top: 1px solid #2a2a2a;
+  border-top: 1px solid var(--line);
 }
 
 /* Face badges over the photo (SPEC §14). The layer is inert so pan/pinch
@@ -748,7 +861,7 @@ kbd {
   align-items: stretch;
   gap: 8px;
   width: 100%;
-  color: #daa;
+  color: var(--danger);
   padding-bottom: 4px;
 }
 
@@ -779,7 +892,7 @@ kbd {
 }
 
 .people-hint {
-  color: #888;
+  color: var(--muted);
 }
 
 .overlay-msg {

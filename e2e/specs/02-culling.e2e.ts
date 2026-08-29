@@ -40,13 +40,13 @@ describe('culling loop: rate, clear, trash, restore', () => {
     // Cmd+Z would be the keyboard path, but the embedded driver drops the
     // Meta modifier — restore through the session trash panel instead.
     await $('button.hud-trash-btn*=trashed').click();
-    const restoreBtn = $('.trash-panel li button');
+    const restoreBtn = $('.trash-list li button');
     await restoreBtn.waitForClickable();
     await restoreBtn.click();
     await browser.waitUntil(async () => (await hudPos()).m === m, {
       timeoutMsg: 'trash-panel restore never brought the photo back',
     });
     expect((await hudPos()).m).toBe(FIXTURE_COUNT);
-    await $('.trash-panel .trash-head button').click(); // close panel
+    await $('.dock-close').click(); // close panel
   });
 });

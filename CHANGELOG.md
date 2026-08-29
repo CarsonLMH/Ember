@@ -8,6 +8,12 @@ when in doubt, ask a session to rebuild.
 
 ## 1.4.0 — 2026-08-23
 
+- People and Trash are now real right-column sidebars — opaque, full height,
+  their own scroll — instead of cards floating over the metadata panel. One
+  takes the column at a time (`p` / the trash button; `i` swaps back to
+  metadata; Esc closes). Person rows get a hover state and a visible Rename
+  control (no more double-click), the scan status lives under the title, and
+  nothing in the footer is clipped any more.
 - Fix: People panel chips no longer stay broken for a person whose best face
   lives in another folder or a trashed photo — the representative now comes
   from the folder you have open, and a crop that can't be served shows a blank

@@ -456,19 +456,44 @@ export default function PeoplePanel({
   };
 
   const scanning = isScanning(status);
+  const indexingOff = status !== null && !status.enabled;
+  // One status slot under the title. "Indexed" means finished, not "still
+  // going": a photo whose retries are exhausted is counted, not left pending.
+  const statusLine = !status
+    ? ''
+    : indexingOff
+      ? 'Indexing off'
+      : scanning
+        ? `Scanning ${status.scanned}/${status.total}` +
+          (status.retrying > 0 ? ` · ${status.retrying} retrying` : '') +
+          (status.errors > 0 ? ` · ${status.errors} failed` : '')
+        : status.total > 0
+          ? `${status.scanned} of ${status.total} indexed` +
+            (status.errors > 0 ? ` · ${status.errors} failed` : '')
+          : '';
 
   return (
-    <div className="trash-panel people-panel">
-      <div className="trash-head">
-        <span>People</span>
-        <button onClick={onClose}>close</button>
-      </div>
-
+    <aside className="dock" aria-label="People">
+      <header className="dock-head">
+        <span className="dock-title">People</span>
+        <span className="dock-status" aria-live="polite">
+          {statusLine}
+        </span>
+        <button className="dock-close" aria-label="Close" title="Close (Esc)" onClick={onClose}>
+          ×
+        </button>
+        {status && scanning && status.total > 0 && (
+          <div className="dock-progress" aria-hidden="true">
+            <div style={{ width: `${Math.round((100 * status.scanned) / status.total)}%` }} />
+          </div>
+        )}
+      </header>
+      <div className="dock-body">
       {status?.engineError && (
         <div className="people-error">Face engine unavailable: {status.engineError}</div>
       )}
 
-      {status && !status.enabled ? (
+      {indexingOff ? (
         <div className="people-disabled">
           <p>Face indexing is off{status.scanned === 0 ? ' and no face data is stored' : ''}.</p>
           <p className="people-hint">
@@ -478,24 +503,6 @@ export default function PeoplePanel({
         </div>
       ) : (
         <>
-          {status &&
-            (scanning ? (
-              <div className="people-progress">
-                Scanning faces… {status.scanned}/{status.total}
-                {status.retrying > 0 ? ` (${status.retrying} retrying)` : ''}
-                {status.errors > 0 ? ` (${status.errors} failed)` : ''}
-              </div>
-            ) : (
-              status.total > 0 && (
-                <div className="people-hint">
-                  {/* Finished, not "still going": a photo whose retries are
-                      exhausted is counted here rather than left pending. */}
-                  {status.scanned} of {status.total} photos indexed
-                  {status.errors > 0 ? ` (${status.errors} failed)` : ''}
-                </div>
-              )
-            ))}
-
           {mergePrompt && (
             <div className="people-toast">
               <span>
@@ -515,25 +522,14 @@ export default function PeoplePanel({
             {persons
               ?.filter((p) => p.folderCount > 0)
               .map((p) => (
-                <li key={p.id} className="people-person">
-                  <button
-                    className="people-row"
-                    onClick={() => setExpanded(expanded === p.id ? null : p.id)}
-                    title="Show this person's faces"
-                  >
-                    {p.repPhotoId !== null && p.repFaceIndex !== null && p.repRevision !== null && (
-                      <FaceChip
-                        photoId={p.repPhotoId}
-                        faceIndex={p.repFaceIndex}
-                        revision={p.repRevision}
-                      />
-                    )}
+                <li key={p.id} className="person">
+                  <div className="person-row">
                     {renaming === p.id ? (
                       <input
                         className="people-input"
+                        aria-label={`Rename ${p.name}`}
                         defaultValue={p.name}
                         autoFocus
-                        onClick={(e) => e.stopPropagation()}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') void rename(p, (e.target as HTMLInputElement).value);
                           if (e.key === 'Escape') setRenaming(null);
@@ -541,19 +537,37 @@ export default function PeoplePanel({
                         onBlur={(e) => void rename(p, e.target.value)}
                       />
                     ) : (
-                      <span
-                        className="people-name"
-                        onDoubleClick={(e) => {
-                          e.stopPropagation();
-                          setRenaming(p.id);
-                        }}
-                        title="Double-click to rename"
+                      <button
+                        className="person-expand"
+                        aria-expanded={expanded === p.id}
+                        title="Show this person's faces"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => setExpanded(expanded === p.id ? null : p.id)}
                       >
-                        {p.name}
-                      </span>
+                        {p.repPhotoId !== null &&
+                          p.repFaceIndex !== null &&
+                          p.repRevision !== null && (
+                            <FaceChip
+                              photoId={p.repPhotoId}
+                              faceIndex={p.repFaceIndex}
+                              revision={p.repRevision}
+                              size={28}
+                            />
+                          )}
+                        <span className="people-name">{p.name}</span>
+                        <span className="people-count">{p.folderCount}</span>
+                      </button>
                     )}
-                    <span className="people-count">{p.folderCount}</span>
-                  </button>
+                    {renaming !== p.id && (
+                      <button
+                        className="person-actions people-dim"
+                        title="Rename"
+                        onClick={() => setRenaming(p.id)}
+                      >
+                        Rename
+                      </button>
+                    )}
+                  </div>
                   {expanded === p.id && (
                     <>
                       <div className="people-faces">
@@ -593,12 +607,11 @@ export default function PeoplePanel({
                         </div>
                       ) : (
                         <div className="people-hint">
-                          double-click the name to rename ·{' '}
                           <button
                             className="people-link"
                             onClick={() => setConfirmDeletePerson(p.id)}
                           >
-                            delete person…
+                            Delete person…
                           </button>
                         </div>
                       )}
@@ -663,7 +676,7 @@ export default function PeoplePanel({
                   </div>
                   <div className="people-cluster-row">
                     <span className="people-hint">
-                      seen in {c.photoCount} photo{c.photoCount === 1 ? '' : 's'}
+                      Seen in {c.photoCount} photo{c.photoCount === 1 ? '' : 's'}
                       {removedHere > 0 && (
                         <>
                           {' · '}
@@ -678,7 +691,7 @@ export default function PeoplePanel({
                               })
                             }
                           >
-                            restore {removedHere}
+                            Restore {removedHere}
                           </button>
                           {' · '}
                           <button
@@ -686,7 +699,7 @@ export default function PeoplePanel({
                             title="The removed faces aren't people you'll label — hide them"
                             onClick={() => void dismissRemoved(c)}
                           >
-                            don't label removed
+                            Don't label removed
                           </button>
                         </>
                       )}
@@ -696,7 +709,7 @@ export default function PeoplePanel({
                       title="Statues, photos of photos, people you'll never label — hide this group"
                       onClick={() => void dismissCluster(c)}
                     >
-                      not a person / don't label
+                      Not a person / don't label
                     </button>
                   </div>
                   <input
@@ -718,7 +731,7 @@ export default function PeoplePanel({
           {clusters && clusters.loose.length > 0 && (
             <div className="people-loose">
               <button className="people-dim" onClick={() => setShowLoose((v) => !v)}>
-                {showLoose ? 'hide' : 'show'} {clusters.loose.length} face
+                {showLoose ? 'Hide' : 'Show'} {clusters.loose.length} face
                 {clusters.loose.length === 1 ? '' : 's'} seen only once
               </button>
               {showLoose && (
@@ -755,7 +768,7 @@ export default function PeoplePanel({
                               if (chip) onJump(chip.photoId);
                             }}
                           >
-                            show photo
+                            Show photo
                           </button>
                         )}
                       </div>
@@ -784,7 +797,11 @@ export default function PeoplePanel({
             </div>
           )}
 
-          <div className="people-footer">
+        </>
+      )}
+      </div>
+      {!indexingOff && (
+          <div className="dock-foot">
             {confirmDelete ? (
               <div className="people-confirm">
                 <span>Wipe all faces &amp; names? Indexing turns off.</span>
@@ -808,27 +825,26 @@ export default function PeoplePanel({
                   title="Re-detect every photo in this folder (keeps names) — use after a missed face or a settings change"
                   onClick={() => void rescan()}
                 >
-                  rescan faces
+                  Rescan faces
                 </button>
                 <button
                   className="people-dim"
                   title="Drop every auto-label in this folder and re-guess from your confirmed faces — labels you made yourself are untouched"
                   onClick={() => void clearAuto()}
                 >
-                  re-run recognition
+                  Re-run recognition
                 </button>
                 <button
                   className="people-dim"
                   title="Save a score-distribution report for tuning recognition thresholds"
                   onClick={() => void calibrate()}
                 >
-                  calibration report
+                  Calibration report
                 </button>
               </>
             )}
           </div>
-        </>
       )}
-    </div>
+    </aside>
   );
 }
