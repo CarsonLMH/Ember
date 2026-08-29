@@ -30,6 +30,9 @@ macOS photo-culling app (Tauri 2 + Rust + React/TS). **Read SPEC.md first** — 
   run, never a ship build (the shipped .app is `--debug`, so the feature flag,
   not `debug_assertions`, is what keeps it out).
 - `npm run tauri build` — release `.app` (install to /Applications at stable milestones).
+- `npm run storybook` — isolated React chrome at `127.0.0.1:6006`; its MCP
+  endpoint is `/mcp` for the project-scoped Codex and Claude connections.
+- `npm run storybook:build` — type/bundle every story and generate manifests.
 - `npm run e2e:build && npm run e2e` — synthetic Tauri harness, including axe
   accessibility and reviewed chrome snapshots; never touches the real Ember DB.
 - `npm run e2e:visual:update` — explicitly replace visual baselines only after
@@ -75,6 +78,12 @@ Ember's chrome is a darkroom: dark-only, quiet, native-feeling. The photograph
 is the only hero — chrome never competes with it for color or attention. This
 section outranks any installed design skill (frontend-design, HIG,
 apple-design, web-design-guidelines); where they conflict with it, this wins.
+
+For React chrome work, inspect the existing Storybook stories through the
+`ember-storybook` MCP server when `npm run storybook` is running. Add or update
+a synthetic story for stable component states, but verify integrated behavior
+in the Tauri app—the component catalog is not acceptance evidence for the
+canvas path, native operations, or real-photo workflows.
 
 - **Deliberate exceptions to generic design-skill advice** — do not "fix" these:
   - System font stack (`-apple-system` / SF Pro) is the *correct* choice for a

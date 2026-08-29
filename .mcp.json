@@ -8,6 +8,10 @@
         "@hypothesi/tauri-mcp-server"
       ],
       "env": {}
+    },
+    "ember-storybook": {
+      "type": "http",
+      "url": "http://127.0.0.1:6006/mcp"
     }
   }
 }
