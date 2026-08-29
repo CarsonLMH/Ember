@@ -1,6 +1,21 @@
 import '@wdio/visual-service';
 import { $, browser, expect } from '@wdio/globals';
-import { key, waitForFolderOpen } from '../lib/harness.js';
+import { goHome, hudPos, hudStars, key, waitForFolderOpen } from '../lib/harness.js';
+
+async function normalizeVerdicts(): Promise<void> {
+  await goHome();
+  const { m } = await hudPos();
+  for (let i = 0; i < m; i += 1) {
+    if ((await hudStars()) > 0) {
+      await key('0', 1, 0);
+      await browser.waitUntil(async () => (await hudStars()) === 0, {
+        timeoutMsg: `clearing stars never acked at visual fixture ${i + 1}`,
+      });
+    }
+    if (i < m - 1) await key('ArrowRight');
+  }
+  await goHome();
+}
 
 async function setPhotoContentHidden(hidden: boolean): Promise<void> {
   await browser.execute((shouldHide) => {
@@ -14,6 +29,10 @@ async function setPhotoContentHidden(hidden: boolean): Promise<void> {
 describe('visual regression: stable application chrome', () => {
   before(async () => {
     await waitForFolderOpen();
+    // Earlier durability specs deliberately leave ratings behind. Reset each
+    // synthetic photo through the normal journaled UI path so this spec has
+    // the same state alone and in the complete suite.
+    await normalizeVerdicts();
   });
 
   it('matches the steady-state culling HUD', async () => {
