@@ -503,6 +503,22 @@ pub fn spawn_chip_repair(
     repair
 }
 
+/// Repair can legitimately produce nothing: the scan is stale, or the preview
+/// it would crop from is gone (janitor-evicted, or the photo is off-disk).
+/// Neither is an error, but a chip that will never heal must not fail
+/// silently — the route keeps 404ing and the panel keeps re-enqueuing, so say
+/// why once per photo per launch.
+fn note_unrepairable(photo_id: &str, why: &str) {
+    static NOTED: std::sync::OnceLock<Mutex<HashSet<String>>> = std::sync::OnceLock::new();
+    let mut noted = NOTED
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap();
+    if noted.insert(photo_id.to_string()) {
+        eprintln!("faces: chip repair for {photo_id} produced nothing — {why}");
+    }
+}
+
 /// One decode regenerates every missing chip of the photo; returns how many
 /// preview decodes it cost, which is the plan's "one decode per photo, no
 /// matter how many chips are missing" made checkable.
@@ -526,6 +542,7 @@ fn repair_photo_inner(
     // One consistent read of everything publication is judged against: the
     // epoch, the chip revision that produced the current rects, and the rects.
     let Ok(Some(src)) = store.face_chip_source(photo_id) else {
+        note_unrepairable(photo_id, "no servable scan (status not 'ok')");
         return 0;
     };
     let expected: HashSet<String> = src
@@ -596,6 +613,7 @@ fn repair_photo_inner(
         .and_then(|b| image::load_from_memory(&b).ok())
         .map(|i| i.to_rgb8())
     else {
+        note_unrepairable(photo_id, "no cached preview to crop from");
         return 0;
     };
     let chips = match encode_chips(preview, photo_id, src.revision, &img, &missing) {

@@ -479,6 +479,13 @@ kbd {
   flex-shrink: 0;
 }
 
+/* Crop can't be served (retry budget spent): a blank disc, not a broken image. */
+.face-chip-missing {
+  display: inline-block;
+  box-sizing: border-box;
+  border: 1px dashed #444;
+}
+
 .people-name {
   flex: 1;
   overflow: hidden;

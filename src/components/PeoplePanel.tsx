@@ -56,6 +56,9 @@ function FaceChip({
   selected?: boolean;
 }) {
   const [attempt, setAttempt] = useState(0);
+  // Budget spent: the crop can't be served (see faces.rs `note_unrepairable`).
+  // A blank chip says so; WebKit's broken-image icon says "bug".
+  const [unavailable, setUnavailable] = useState(false);
   const alive = useRef(true);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -72,6 +75,7 @@ function FaceChip({
   // an old timer could burn the new artifact's attempts.
   useEffect(() => {
     setAttempt(0);
+    setUnavailable(false);
     return () => {
       if (retryTimer.current) {
         clearTimeout(retryTimer.current);
@@ -80,9 +84,20 @@ function FaceChip({
     };
   }, [photoId, faceIndex, revision]);
   const clickable = onPress ?? (onJump ? () => onJump(photoId) : undefined);
+  const className = `face-chip${clickable ? ' face-chip-link' : ''}${selected ? ' face-chip-selected' : ''}`;
+  if (unavailable) {
+    return (
+      <span
+        className={`${className} face-chip-missing`}
+        style={{ width: size, height: size }}
+        title="Face crop unavailable"
+        onClick={clickable}
+      />
+    );
+  }
   return (
     <img
-      className={`face-chip${clickable ? ' face-chip-link' : ''}${selected ? ' face-chip-selected' : ''}`}
+      className={className}
       style={{ width: size, height: size }}
       src={`${faceChipUrl(photoId, faceIndex, revision)}?r=${attempt}`}
       loading="lazy"
@@ -92,7 +107,9 @@ function FaceChip({
       onError={() => {
         // Each miss enqueues a repair; on a wiped cache the preview must
         // regenerate first, so the tail retries stretch out (~30s total).
-        if (attempt < 15 && !retryTimer.current) {
+        if (attempt >= 15) {
+          setUnavailable(true);
+        } else if (!retryTimer.current) {
           retryTimer.current = setTimeout(
             () => {
               retryTimer.current = null;

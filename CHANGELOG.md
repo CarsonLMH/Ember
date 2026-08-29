@@ -8,6 +8,10 @@ when in doubt, ask a session to rebuild.
 
 ## 1.4.0 — 2026-08-23
 
+- Fix: People panel chips no longer stay broken for a person whose best face
+  lives in another folder or a trashed photo — the representative now comes
+  from the folder you have open, and a crop that can't be served shows a blank
+  chip instead of a broken image.
 - The filmstrip can receive keyboard focus, so keyboard and assistive-technology
   users can reach and scroll it.
 - **Focus check**: every photo gets a sharpness score measured at the camera's

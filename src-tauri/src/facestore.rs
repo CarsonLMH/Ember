@@ -1104,8 +1104,11 @@ pub struct PersonOut {
     pub name: String,
     /// Faces of this person in the queried folder (trashed excluded).
     pub folder_count: i64,
-    /// Global representative face for the chip (photoId, faceIndex, and the
-    /// chip_revision its baked file is named under).
+    /// Representative face for the chip (photoId, faceIndex, and the
+    /// chip_revision its baked file is named under): from the queried folder
+    /// when the person appears in it, otherwise from anywhere — but never a
+    /// trashed or missing photo, and only from a scan whose chips are
+    /// servable. See `person_row`.
     pub rep_photo_id: Option<String>,
     pub rep_face_index: Option<i64>,
     pub rep_revision: Option<i64>,
@@ -2282,17 +2285,20 @@ pub(crate) fn person_row(
             |r| r.get(0),
         )?,
     };
-    // Stable global representative: user-confirmed first, then strongest.
-    let rep: Option<(String, i64, i64)> = conn
-        .query_row(
-            "SELECT f.photo_id, f.face_index, s.chip_revision
-             FROM faces f JOIN face_scan s ON s.photo_id = f.photo_id
-             WHERE f.person_id = ?1 AND f.ignored = 0
-             ORDER BY (f.assigned_by = 'user') DESC, f.det_score DESC LIMIT 1",
-            params![person_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )
-        .optional()?;
+    // Representative: a face from the folder being viewed first, then from
+    // anywhere. Every chip URL this app hands out must be one the face route
+    // can serve: the old global pick could name a photo in a closed folder
+    // whose preview the janitor had since evicted — the route 404s, repair
+    // has no pixels to crop from, and the chip stays broken for as long as
+    // that folder stays closed (audit B1). Trashed and missing photos are
+    // out for the same reason; a non-'ok' scan has no servable chips at all.
+    let mut rep = None;
+    if let Some(fid) = folder_id {
+        rep = rep_face(conn, person_id, Some(fid))?;
+    }
+    if rep.is_none() {
+        rep = rep_face(conn, person_id, None)?;
+    }
     Ok(PersonOut {
         id: person_id,
         name,
@@ -2301,6 +2307,28 @@ pub(crate) fn person_row(
         rep_face_index: rep.as_ref().map(|(_, i, _)| *i),
         rep_revision: rep.map(|(.., rev)| rev),
     })
+}
+
+/// User-confirmed first, then strongest detection; `folder_id` narrows the
+/// pick to one folder's untrashed, on-disk photos.
+fn rep_face(
+    conn: &Connection,
+    person_id: i64,
+    folder_id: Option<i64>,
+) -> rusqlite::Result<Option<(String, i64, i64)>> {
+    conn.query_row(
+        "SELECT f.photo_id, f.face_index, s.chip_revision
+         FROM faces f
+         JOIN face_scan s ON s.photo_id = f.photo_id
+         JOIN photos p ON p.id = f.photo_id
+         WHERE f.person_id = ?1 AND f.ignored = 0
+           AND p.trashed = 0 AND p.missing = 0 AND s.status = 'ok'
+           AND (?2 IS NULL OR p.folder_id = ?2)
+         ORDER BY (f.assigned_by = 'user') DESC, f.det_score DESC LIMIT 1",
+        params![person_id, folder_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )
+    .optional()
 }
 
 #[cfg(test)]
@@ -2657,6 +2685,87 @@ mod tests {
             |r| r.get::<_, i64>(0),
         )
         .unwrap();
+    }
+
+    /// Audit B1: a person's chip must come from a photo the face route can
+    /// serve — the open folder first, never a trashed/missing photo or a
+    /// stale scan — or the People panel shows a broken image forever.
+    #[test]
+    fn representative_prefers_open_folder_and_only_servable_photos() {
+        let (store, mut worker, folder_a, _) = setup();
+        let (gen, ids) = seed_faces(&mut worker);
+        let (res, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
+        let nati = res.person.id;
+
+        // A second folder with one stronger, user-confirmed face of Nati.
+        let folder_b = store.open_folder("/tmp/faces-y").unwrap().folder_id;
+        let q1 = Arc::new(PhotoEntry {
+            id: "q1".into(),
+            dir: "/tmp/faces-y".into(),
+            stem: "Q1".into(),
+            jpeg: Some("/tmp/faces-y/q1.JPG".into()),
+            raf: None,
+            mtime: 1,
+            size: 1,
+        });
+        store.sync_photos(folder_b, &[q1]).unwrap();
+        let snap = snapshot(&worker, "q1", gen).unwrap();
+        let out = commit_scan(
+            &mut worker,
+            "q1",
+            &snap,
+            &[nf(R1, &emb(1.0, 0.0))],
+            &[],
+            1,
+            1,
+            &source_ok,
+        )
+        .unwrap();
+        assert!(matches!(out, CommitOutcome::Committed(_)));
+        let q1_face: i64 = worker
+            .query_row("SELECT id FROM faces WHERE photo_id='q1'", [], |r| r.get(0))
+            .unwrap();
+        store.face_assign(q1_face, Some(nati)).unwrap();
+        worker
+            .execute(
+                "UPDATE faces SET det_score = 1.0 WHERE id = ?1",
+                params![q1_face],
+            )
+            .unwrap();
+
+        let rep = |folder: i64| {
+            store
+                .list_persons(folder)
+                .unwrap()
+                .into_iter()
+                .find(|p| p.id == nati)
+                .and_then(|p| p.rep_photo_id)
+        };
+        // Each folder shows a face from its own photos, whatever scores best
+        // globally.
+        assert_eq!(rep(folder_a).as_deref(), Some("p1"));
+        assert_eq!(rep(folder_b).as_deref(), Some("q1"));
+
+        // Trashed photos are never the representative: folder B falls back
+        // to the global pick.
+        worker
+            .execute("UPDATE photos SET trashed = 1 WHERE id = 'q1'", [])
+            .unwrap();
+        assert_eq!(rep(folder_b).as_deref(), Some("p1"));
+
+        // A stale scan has no servable chips; with q1 trashed nothing is
+        // left, and the panel gets no chip rather than a broken one.
+        worker
+            .execute(
+                "UPDATE face_scan SET status = 'stale' WHERE photo_id = 'p1'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(rep(folder_a), None);
+        worker
+            .execute("UPDATE photos SET trashed = 0 WHERE id = 'q1'", [])
+            .unwrap();
+        assert_eq!(rep(folder_a).as_deref(), Some("q1"), "global fallback");
     }
 
     #[test]
