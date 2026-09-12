@@ -23,9 +23,17 @@ native window, a quiet Mac, or private real photos.
 | Visible perf tripwire | `npm run e2e:perf` | 320 generated JPEGs; **visible and focus-taking** | Instrumented debug-build regression tripwire, not the 50 ms product gate |
 | Maintainer real-photo gate | `./scripts/gate.sh /absolute/path/to/disposable-copy` | Private disposable copy; hidden but uses production identifier | Zoom integrity and the hard flip/cache budget, including pinned-active face inference |
 
+`cargo test` is non-visual, but it is not completely isolated from macOS: the
+`trash_and_restore_roundtrip` test moves one generated temporary text file into
+the real system Trash and immediately puts it back. It never selects a personal
+file. An interrupted or failed run may leave that synthetic temp artifact in
+the Trash.
+
 The screenshot maintenance command, `npm run docs:screenshot`, is a separate
 hidden E2E path. It regenerates a fixed privacy-safe fixture and writes
-`docs/assets/ember-culling.jpg`; it is not a general screenshot tool.
+`docs/assets/ember-culling.jpg`; it is not a general screenshot tool. Like the
+visual and performance commands, it reuses the native E2E binary, so run
+`npm run e2e:build` first.
 
 ## What CI enforces
 
@@ -73,8 +81,8 @@ The default hidden suite covers:
 
 - folder open, navigation boundaries, filmstrip readiness, immersion, native
   Tab traversal, and zoom preservation;
-- rating-in-place, clearing, pair trash/restore, exact/minimum star filters,
-  and sort/reverse behavior;
+- rating-in-place, clearing, single-JPEG trash/restore, exact/minimum star
+  filters, and sort/reverse behavior (pair rollback is covered in Rust tests);
 - a deliberate `kill -9` after journal-acknowledged ratings, followed by a
   fresh-process replay check; and
 - automated WCAG A/AA checks plus shortcut-dialog focus containment.
@@ -87,7 +95,8 @@ test state.
 
 These commands can open a native window, take focus, and pull a user out of a
 full-screen workspace. Warn the person using the Mac, agree on a time, and
-batch the run.
+batch the run. Build their shared native binary first with
+`npm run e2e:build`.
 
 ### Visual regression
 

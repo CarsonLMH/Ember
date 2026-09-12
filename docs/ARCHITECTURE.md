@@ -56,9 +56,9 @@ runtime and development-tool boundaries.
 | Decoded-pixel lifetime | Explicit `ImageBitmap` LRU | [`src/lib/imageCache.ts`](../src/lib/imageCache.ts) |
 | Frontend/backend contract | Typed Tauri invokes and events | [`src/lib/ipc.ts`](../src/lib/ipc.ts), [`src-tauri/src/lib.rs`](../src-tauri/src/lib.rs) |
 | Folder scan and JPEG+RAF pairing | Rust | [`scanner.rs`](../src-tauri/src/scanner.rs) |
-| Durable state and verdict journal | SQLite | [`store.rs`](../src-tauri/src/store.rs), [`facestore.rs`](../src-tauri/src/facestore.rs) |
+| Durable verdict state and action journal | SQLite | [`store.rs`](../src-tauri/src/store.rs) |
 | Preview generation and local image serving | Rust worker pools | [`preview.rs`](../src-tauri/src/preview.rs), [`protocol.rs`](../src-tauri/src/protocol.rs) |
-| Metadata and external writes | Rust plus one persistent ExifTool child | [`metadata.rs`](../src-tauri/src/metadata.rs), [`xmp.rs`](../src-tauri/src/xmp.rs) |
+| Metadata and external writes | Rust plus one shared persistent ExifTool child | [`metadata.rs`](../src-tauri/src/metadata.rs), [`xmp.rs`](../src-tauri/src/xmp.rs) |
 | Native trash and restore | Rust/AppKit foundation APIs | [`trash.rs`](../src-tauri/src/trash.rs) |
 | Face detection, recognition, and persistence | One ONNX worker plus guarded SQLite writes | [`faces.rs`](../src-tauri/src/faces.rs), [`facedet.rs`](../src-tauri/src/facedet.rs), [`facestore.rs`](../src-tauri/src/facestore.rs) |
 
@@ -136,11 +136,12 @@ back only the half moved by the current call.
 ## Background work and contention boundaries
 
 - Six preview workers generate oriented screen-size previews and thumbnails,
-  prioritized around the current cursor.
+  prioritized around the current cursor. RAF display extraction may spawn
+  short-lived local ExifTool commands for its embedded JPEG.
 - Six protocol workers bound cache-file reads and keep disk I/O off WebKit's
   URI-scheme callback thread.
-- One metadata worker batches MakerNote reads through one serialized,
-  persistent ExifTool process.
+- One metadata worker and the XMP queue share one serialized, persistent
+  ExifTool process for MakerNote reads and metadata updates.
 - One XMP queue worker performs external metadata writes away from the flip
   path.
 - One face worker uses its own SQLite connection, one ONNX intra-op thread,
@@ -184,8 +185,11 @@ full deletion protocol and its limits are documented in
 |---|---|---:|
 | `~/Library/Application Support/com.cleung.ember/ember.sqlite3` plus SQLite WAL/SHM files | Folder state, journal, queues, metadata, focus and face data | No: contains the durable session record |
 | Same Application Support directory: `settings.toml`, `keymap.toml`, `recipes.toml`, `tags.toml` | Human-editable configuration | User-authored |
-| Same directory: `perf-reports/` | Local benchmark reports | Yes, but useful evidence |
+| Same directory: `perf-reports/` | Local flip benchmarks and face-calibration reports | Yes; calibration reports can contain person names/IDs and are removed by **Delete all face data** |
 | `~/Library/Caches/com.cleung.ember/previews/` | Previews, thumbnails, exposure artifacts, RAF display extracts, and revisioned face chips | Yes |
+| `~/Library/WebKit/com.cleung.ember/` | WKWebView website data, including Ember's `localStorage` UI preferences | Yes; macOS/WebKit-managed |
+| `~/Library/Preferences/com.cleung.ember.plist` | Native open-panel and window preferences; may retain the last browsed directory | Yes; macOS-managed |
+| `~/Library/Saved Application State/com.cleung.ember.savedState/` | Native window-restoration state | Yes; macOS-managed and not present on every system |
 | User-selected photo folders | Source JPEG/RAF files and XMP sidecars | User data |
 | macOS system Trash | Recoverable trashed source files | Managed by macOS |
 

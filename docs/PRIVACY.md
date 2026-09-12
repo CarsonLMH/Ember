@@ -23,8 +23,9 @@ run on the Mac.
 | Face chips | `~/Library/Caches/com.cleung.ember/previews/` | People-panel thumbnails and on-demand repair | Biometric image crops; swept by face deletion and retried after a failed sweep |
 | Previews, thumbnails, histograms, clipping masks and RAF display extracts | Same preview cache | Fast display and inspection | Derived photo content; safe for Ember to regenerate, but still private imagery |
 | `settings.toml`, `keymap.toml`, `recipes.toml`, `tags.toml` | Application Support directory | User configuration | May include custom names or workflow vocabulary |
-| UI preferences | WKWebView `localStorage` | Panel visibility, face badges, auto-advance, histogram and blinkies | Local preference state; not photo verdicts |
-| Performance reports | `Application Support/.../perf-reports/` | Local performance evidence | Aggregate timings; retain or remove separately |
+| UI preferences | WKWebView `localStorage`, stored under `~/Library/WebKit/com.cleung.ember/` on current macOS builds | Panel visibility, face badges, auto-advance, histogram and blinkies | Local preference state; not photo verdicts |
+| Native picker/window preferences | `~/Library/Preferences/com.cleung.ember.plist` and, when present, `~/Library/Saved Application State/com.cleung.ember.savedState/` | macOS open-panel history, window geometry and restoration | May retain the last browsed directory; not removed with Ember's database or cache |
+| Performance and face-calibration reports | `Application Support/.../perf-reports/` | Local flip evidence and recognition-threshold calibration | Flip reports are aggregate timings; calibration reports contain person names/IDs and similarity scores and are removed by **Delete all face data** |
 | Source photos and sidecars | User-selected folders | The library being culled | User-owned originals; see file mutations below |
 | Trashed source files | macOS system Trash | Recoverable pair trash | Remain until the user empties Trash or puts them back |
 
@@ -32,6 +33,13 @@ The primary paths are:
 
 - `~/Library/Application Support/com.cleung.ember/`
 - `~/Library/Caches/com.cleung.ember/previews/`
+- `~/Library/WebKit/com.cleung.ember/`
+- `~/Library/Preferences/com.cleung.ember.plist`
+- `~/Library/Saved Application State/com.cleung.ember.savedState/` when present
+
+The first two locations are managed directly by Ember. WebKit and macOS manage
+the remaining UI, picker and restoration state; their exact contents and
+presence can vary with the macOS/WebKit version.
 
 SQLite may have `ember.sqlite3-wal` and `ember.sqlite3-shm` beside the main
 database after an active or unclean session. They are part of the database
@@ -71,9 +79,10 @@ hexadecimal IDs to registered local sources and cache files; it is not an HTTP
 upload endpoint.
 YuNet and SFace run through the bundled ONNX Runtime on CPU.
 
-Ember does start one local ExifTool subprocess on demand. Commands and metadata
-travel over that child's stdin/stdout; ExifTool is not used as a network
-service.
+Ember starts one shared, persistent local ExifTool subprocess on demand for
+MakerNote reads and metadata updates. Preview workers may also start short-lived
+ExifTool processes to extract embedded JPEGs from RAF files. Commands, metadata,
+and extracted bytes stay on the Mac; ExifTool is not used as a network service.
 
 The source-build process is different from runtime: npm/Cargo obtain normal
 dependencies, and the `ort` build can download its pinned native runtime unless
@@ -107,29 +116,38 @@ panel:
    `settings.toml` within the serialized critical section.
 3. Any stale worker commit or chip publication then fails its epoch/row guards.
 4. Ember sweeps every recognized face-chip artifact, including temporary chip
-   files.
-5. The sweep obligation is cleared only after a complete successful sweep.
+   files, and every generated `faces-calibration-*.json` report.
+5. Calibration-report publication and Delete-all's database wipe transition
+   take the same cross-process SQLite writer lock. The filesystem sweep follows
+   the committed wipe: a report either lands before that transition and is
+   swept, or observes the changed wipe sequence and refuses to publish.
+6. The sweep obligation is cleared only after every chip and calibration report
+   is gone.
 
 If the settings write fails, the command reports it and the database remains
-authoritative; launch reconciliation rewrites the file. If chip removal fails,
-the command reports that the database data is gone and indexing is off, leaves
-`chip_sweep_pending` set, and retries the sweep next launch. Cleanup failure is
-never converted into a success message.
+authoritative; launch reconciliation rewrites the file. If face-chip or
+calibration-report removal fails, the command reports that the database data is
+gone and indexing is off, leaves `chip_sweep_pending` set, and retries the sweep
+next launch. Cleanup failure is never converted into a success message.
 
 Deletion does **not** remove ratings, tags, action history, cached MakerNotes,
-focus scores, general previews, performance reports, source photos, sidecars,
-or files already in the macOS Trash. Re-enabling faces is a separate explicit
-act and starts face indexing from scratch.
+focus scores, general previews, ordinary `report-*.json` flip reports, source
+photos, sidecars, or files already in the macOS Trash. Re-enabling faces is a
+separate explicit act and starts face indexing from scratch.
 
 ## Removing all Ember-local state
 
 Ember currently has no single in-app command that erases every category in the
-inventory. A full reset requires quitting every Ember process and deliberately
-removing the application-support and cache directories listed above. Back up
-anything needed first: removing `ember.sqlite3` permanently discards the local
-journal, undo history, folder state, and face data. It does not reverse XMP or
-xattr writes already made to photos, delete sidecars, or restore files from the
-macOS Trash.
+inventory. After quitting every Ember process, removing the Application Support
+and cache locations clears Ember-managed session, configuration and derived
+image data. A complete local UI reset must also remove the WebKit data, the
+`com.cleung.ember` macOS preference domain, and Saved Application State listed
+above; macOS may later recreate empty containers for them.
+
+Back up anything needed first: removing `ember.sqlite3` permanently discards the
+local journal, undo history, folder state, and face data. None of these reset
+steps reverses XMP or xattr writes already made to photos, deletes sidecars, or
+restores files from the macOS Trash.
 
 ## Threat model
 
@@ -139,7 +157,7 @@ Ember is designed to protect against:
 - stale background face work racing a user correction, model change, rescan,
   or privacy deletion;
 - two instances of the same installed build sharing the database;
-- partial face-chip cleanup and stale cache artifacts;
+- partial face-chip or calibration-report cleanup and stale cache artifacts;
 - accidental remote transfer through an application cloud/telemetry feature,
   because no such runtime feature exists.
 
@@ -168,8 +186,8 @@ not treated as a hard launch failure.
 - Real-photo inspection requires explicit one-run consent and stays local.
 - Use a disposable copy for any gate that can write ratings, sidecars, xattrs,
   face data, or Trash state.
-- Never publish personal photos, face chips, person names, paths, EXIF, an
-  Ember database, or raw real-photo gate output.
+- Never publish personal photos, face chips, real-library person labels, private
+  paths, EXIF, an Ember database, or raw real-photo gate output.
 - The public README screenshot pipeline uses the generated fictional source in
   `docs/assets/`, a fixed synthetic folder, and the isolated E2E identifier.
 
