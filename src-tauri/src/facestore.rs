@@ -2275,7 +2275,8 @@ pub(crate) fn person_row(
     let folder_count = match folder_id {
         Some(fid) => conn.query_row(
             "SELECT COUNT(*) FROM faces f JOIN photos p ON p.id = f.photo_id
-             WHERE f.person_id = ?1 AND f.ignored = 0 AND p.folder_id = ?2 AND p.trashed = 0",
+             WHERE f.person_id = ?1 AND f.ignored = 0 AND p.folder_id = ?2
+               AND p.trashed = 0 AND p.missing = 0",
             params![person_id, fid],
             |r| r.get(0),
         )?,
@@ -2285,20 +2286,12 @@ pub(crate) fn person_row(
             |r| r.get(0),
         )?,
     };
-    // Representative: a face from the folder being viewed first, then from
-    // anywhere. Every chip URL this app hands out must be one the face route
-    // can serve: the old global pick could name a photo in a closed folder
-    // whose preview the janitor had since evicted — the route 404s, repair
-    // has no pixels to crop from, and the chip stays broken for as long as
-    // that folder stays closed (audit B1). Trashed and missing photos are
-    // out for the same reason; a non-'ok' scan has no servable chips at all.
-    let mut rep = None;
-    if let Some(fid) = folder_id {
-        rep = rep_face(conn, person_id, Some(fid))?;
-    }
-    if rep.is_none() {
-        rep = rep_face(conn, person_id, None)?;
-    }
+    // A folder-scoped row never borrows its representative from a closed
+    // folder: that folder's preview may have been evicted, leaving repair no
+    // pixels to crop. A stale scan is still eligible because rescan leaves
+    // the committed revision and any baked chips in place until replacement.
+    // The route owns the final file-existence check and repair path.
+    let rep = rep_face(conn, person_id, folder_id)?;
     Ok(PersonOut {
         id: person_id,
         name,
@@ -2310,7 +2303,9 @@ pub(crate) fn person_row(
 }
 
 /// User-confirmed first, then strongest detection; `folder_id` narrows the
-/// pick to one folder's untrashed, on-disk photos.
+/// pick to one folder's untrashed, on-disk photos. Scan status deliberately
+/// does not gate the pick: a stale row retains its committed chip revision
+/// while a rescan is in flight.
 fn rep_face(
     conn: &Connection,
     person_id: i64,
@@ -2322,7 +2317,7 @@ fn rep_face(
          JOIN face_scan s ON s.photo_id = f.photo_id
          JOIN photos p ON p.id = f.photo_id
          WHERE f.person_id = ?1 AND f.ignored = 0
-           AND p.trashed = 0 AND p.missing = 0 AND s.status = 'ok'
+           AND p.trashed = 0 AND p.missing = 0
            AND (?2 IS NULL OR p.folder_id = ?2)
          ORDER BY (f.assigned_by = 'user') DESC, f.det_score DESC LIMIT 1",
         params![person_id, folder_id],
@@ -2687,11 +2682,12 @@ mod tests {
         .unwrap();
     }
 
-    /// Audit B1: a person's chip must come from a photo the face route can
-    /// serve — the open folder first, never a trashed/missing photo or a
-    /// stale scan — or the People panel shows a broken image forever.
+    /// Audit B1: a person's chip must stay inside the open folder, whose
+    /// previews are protected/rebuilt while the panel is visible. A stale
+    /// scan keeps its committed revision until the rescan replaces it, so an
+    /// already-baked chip remains usable during that transition.
     #[test]
-    fn representative_prefers_open_folder_and_only_servable_photos() {
+    fn representative_stays_in_open_folder_and_survives_rescan() {
         let (store, mut worker, folder_a, _) = setup();
         let (gen, ids) = seed_faces(&mut worker);
         let (res, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
@@ -2733,39 +2729,48 @@ mod tests {
             )
             .unwrap();
 
-        let rep = |folder: i64| {
+        let row = |folder: i64| {
             store
                 .list_persons(folder)
                 .unwrap()
                 .into_iter()
                 .find(|p| p.id == nati)
-                .and_then(|p| p.rep_photo_id)
+                .unwrap()
         };
         // Each folder shows a face from its own photos, whatever scores best
         // globally.
-        assert_eq!(rep(folder_a).as_deref(), Some("p1"));
-        assert_eq!(rep(folder_b).as_deref(), Some("q1"));
+        assert_eq!(row(folder_a).rep_photo_id.as_deref(), Some("p1"));
+        assert_eq!(row(folder_b).rep_photo_id.as_deref(), Some("q1"));
 
-        // Trashed photos are never the representative: folder B falls back
-        // to the global pick.
+        // Trashed photos are never the representative, and a folder-scoped
+        // row never falls back to a different folder.
         worker
             .execute("UPDATE photos SET trashed = 1 WHERE id = 'q1'", [])
             .unwrap();
-        assert_eq!(rep(folder_b).as_deref(), Some("p1"));
+        assert_eq!(row(folder_b).folder_count, 0);
+        assert_eq!(row(folder_b).rep_photo_id, None);
 
-        // A stale scan has no servable chips; with q1 trashed nothing is
-        // left, and the panel gets no chip rather than a broken one.
+        // Rescan marks the old scan stale before replacing it. Its committed
+        // chip revision remains the right representative during that window.
         worker
             .execute(
                 "UPDATE face_scan SET status = 'stale' WHERE photo_id = 'p1'",
                 [],
             )
             .unwrap();
-        assert_eq!(rep(folder_a), None);
+        assert_eq!(row(folder_a).rep_photo_id.as_deref(), Some("p1"));
+
+        // Missing photos leave both the count and representative. Reopening
+        // a photo in another folder cannot leak it back into this row.
+        worker
+            .execute("UPDATE photos SET missing = 1 WHERE id = 'p1'", [])
+            .unwrap();
+        assert_eq!(row(folder_a).folder_count, 0);
+        assert_eq!(row(folder_a).rep_photo_id, None);
         worker
             .execute("UPDATE photos SET trashed = 0 WHERE id = 'q1'", [])
             .unwrap();
-        assert_eq!(rep(folder_a).as_deref(), Some("q1"), "global fallback");
+        assert_eq!(row(folder_a).rep_photo_id, None, "no global fallback");
     }
 
     #[test]

@@ -594,7 +594,7 @@ kbd {
 .face-chip-missing {
   display: inline-block;
   box-sizing: border-box;
-  border: 1px dashed #444;
+  border: 1px dashed var(--line);
 }
 
 .people-name {

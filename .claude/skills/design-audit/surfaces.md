@@ -65,7 +65,7 @@ toggle in localStorage — restore them to how you found them.
 - States: with trashed photos (`photos.trashed=1` — query: `select count(*) from photos where folder_id=? and trashed=1`); empty.
 - Safe: open, scroll, close. **Unsafe:** every button inside.
 - Note: shares its shell with the People panel — root cause A of the faces audit may be an app problem, not a faces one; audit this surface to find out.
-- Code: `src/App.tsx` (`showTrash`), CSS `.trash-*`.
+- Code: `src/App.tsx` (`dock === 'trash'`), CSS `.dock*` and `.trash-*`.
 
 ### People panel
 - Toggle: `p`. Anchor `.dock[aria-label="People"]`. Header `.dock-head` (status `.dock-status`, close `.dock-close`), sections `.people-section`, rows `.person` (expand `.person-expand`), chips `.face-chip`, clusters `.people-cluster`, footer `.dock-foot`, toasts `.people-toast`, confirms `.people-confirm`.

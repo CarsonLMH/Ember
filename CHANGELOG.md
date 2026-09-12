@@ -15,9 +15,11 @@ when in doubt, ask a session to rebuild.
   control (no more double-click), the scan status lives under the title, and
   nothing in the footer is clipped any more.
 - Fix: People panel chips no longer stay broken for a person whose best face
-  lives in another folder or a trashed photo — the representative now comes
-  from the folder you have open, and a crop that can't be served shows a blank
-  chip instead of a broken image.
+  lives in another folder or a trashed photo — the representative stays in
+  the folder you have open, and a temporarily missing crop shows a blank chip
+  while Ember keeps probing for its repaired image.
+- Fix: Escape closes People from its naming fields, clicking another person
+  commits a pending rename, and clickable face chips work from the keyboard.
 - The filmstrip can receive keyboard focus, so keyboard and assistive-technology
   users can reach and scroll it.
 - **Focus check**: every photo gets a sharpness score measured at the camera's

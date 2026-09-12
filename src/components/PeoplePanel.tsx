@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import {
   clearAutoAssignments,
   deleteFaceData,
@@ -56,8 +56,9 @@ function FaceChip({
   selected?: boolean;
 }) {
   const [attempt, setAttempt] = useState(0);
-  // Budget spent: the crop can't be served (see faces.rs `note_unrepairable`).
-  // A blank chip says so; WebKit's broken-image icon says "bug".
+  // The fast retry budget is spent. Show a blank chip instead of WebKit's
+  // broken-image icon, but keep a slow probe alive: preview regeneration can
+  // make the same artifact servable later without changing its identity.
   const [unavailable, setUnavailable] = useState(false);
   const alive = useRef(true);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -84,6 +85,12 @@ function FaceChip({
     };
   }, [photoId, faceIndex, revision]);
   const clickable = onPress ?? (onJump ? () => onJump(photoId) : undefined);
+  const accessibleName = onPress ? (pressTitle ?? 'Select this face') : onJump ? 'Show this photo' : undefined;
+  const activateFromKey = (event: KeyboardEvent<HTMLElement>) => {
+    if (!clickable || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    clickable();
+  };
   const className = `face-chip${clickable ? ' face-chip-link' : ''}${selected ? ' face-chip-selected' : ''}`;
   if (unavailable) {
     return (
@@ -92,6 +99,10 @@ function FaceChip({
         style={{ width: size, height: size }}
         title="Face crop unavailable"
         onClick={clickable}
+        onKeyDown={clickable ? activateFromKey : undefined}
+        role={clickable ? 'button' : undefined}
+        tabIndex={clickable ? 0 : undefined}
+        aria-label={accessibleName}
       />
     );
   }
@@ -104,11 +115,24 @@ function FaceChip({
       alt=""
       title={onPress ? pressTitle : onJump ? 'Show this photo' : undefined}
       onClick={clickable}
+      onKeyDown={clickable ? activateFromKey : undefined}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      aria-label={accessibleName}
       onError={() => {
         // Each miss enqueues a repair; on a wiped cache the preview must
-        // regenerate first, so the tail retries stretch out (~30s total).
+        // regenerate first, so the fast retries stretch out (~30s total),
+        // then a quiet probe keeps trying every 30s while the panel is open.
         if (attempt >= 15) {
           setUnavailable(true);
+          if (!retryTimer.current) {
+            retryTimer.current = setTimeout(() => {
+              retryTimer.current = null;
+              if (!alive.current) return;
+              setAttempt((a) => a + 1);
+              setUnavailable(false);
+            }, 30_000);
+          }
         } else if (!retryTimer.current) {
           retryTimer.current = setTimeout(
             () => {
@@ -476,7 +500,7 @@ export default function PeoplePanel({
     <aside className="dock" aria-label="People">
       <header className="dock-head">
         <span className="dock-title">People</span>
-        <span className="dock-status" aria-live="polite">
+        <span className="dock-status" aria-live={scanning ? 'off' : 'polite'}>
           {statusLine}
         </span>
         <button className="dock-close" aria-label="Close" title="Close (Esc)" onClick={onClose}>
@@ -541,7 +565,6 @@ export default function PeoplePanel({
                         className="person-expand"
                         aria-expanded={expanded === p.id}
                         title="Show this person's faces"
-                        onMouseDown={(e) => e.preventDefault()}
                         onClick={() => setExpanded(expanded === p.id ? null : p.id)}
                       >
                         {p.repPhotoId !== null &&
@@ -716,6 +739,11 @@ export default function PeoplePanel({
                     className="people-input"
                     placeholder="Who is this?"
                     onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        e.preventDefault();
+                        onClose();
+                        return;
+                      }
                       if (e.key === 'Enter') {
                         const input = e.target as HTMLInputElement;
                         void nameCluster(c, input.value);
@@ -776,6 +804,11 @@ export default function PeoplePanel({
                         className="people-input"
                         placeholder={`Who is this? (names ${looseSelected.size} selected)`}
                         onKeyDown={(e) => {
+                          if (e.key === 'Escape') {
+                            e.preventDefault();
+                            onClose();
+                            return;
+                          }
                           if (e.key === 'Enter') {
                             const input = e.target as HTMLInputElement;
                             void nameLoose(input.value);
