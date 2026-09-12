@@ -40,6 +40,20 @@ describe('culling loop: rate, clear, trash, restore', () => {
     // Cmd+Z would be the keyboard path, but the embedded driver drops the
     // Meta modifier — restore through the session trash panel instead.
     await $('button.hud-trash-btn*=trashed').click();
+    await $('.dock[aria-label="Trash"]').waitForDisplayed();
+
+    // Docks own the right column but never the culling keyboard. Escape closes
+    // one; `i` swaps it for metadata exactly as the shortcut promises.
+    await key('Escape', 1, 0);
+    await $('.dock').waitForExist({ reverse: true });
+    await $('button.hud-trash-btn*=trashed').click();
+    await key('i', 1, 0);
+    await $('.dock').waitForExist({ reverse: true });
+    await $('.exif-panel').waitForDisplayed();
+    await key('i', 1, 0);
+    await $('.exif-panel').waitForExist({ reverse: true });
+
+    await $('button.hud-trash-btn*=trashed').click();
     const restoreBtn = $('.trash-list li button');
     await restoreBtn.waitForClickable();
     await restoreBtn.click();

@@ -567,7 +567,7 @@ export default function App() {
         )}
 
         {photo && (
-          <div className="hud">
+          <div className="hud" data-sorted-by-capture={state.sortedByCapture}>
             <span className="hud-name">{photo.stem}</span>
             <span className="hud-badge">{pairBadge(photo.hasJpeg, photo.hasRaf)}</span>
             {photo.missing && <span className="hud-chip hud-warn">missing on disk</span>}

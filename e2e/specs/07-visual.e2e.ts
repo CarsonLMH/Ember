@@ -29,6 +29,13 @@ async function setPhotoContentHidden(hidden: boolean): Promise<void> {
 describe('visual regression: stable application chrome', () => {
   before(async () => {
     await waitForFolderOpen();
+    // Folder-open renders before the background capture-time sort finishes.
+    // A snapshot of that transitional "sorting…" note is timing-dependent,
+    // so wait on the state marker rather than approving it into the baseline.
+    await $('.hud[data-sorted-by-capture="true"]').waitForExist({
+      timeout: 15_000,
+      timeoutMsg: 'capture-time sort never settled before visual comparison',
+    });
     // Earlier durability specs deliberately leave ratings behind. Reset each
     // synthetic photo through the normal journaled UI path so this spec has
     // the same state alone and in the complete suite.
