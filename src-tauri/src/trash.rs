@@ -65,21 +65,44 @@ pub struct TrashedPair {
 }
 
 /// Pair-atomic trash: both files or neither. If the RAF fails after the JPEG
-/// was trashed, the JPEG is moved back before returning the error.
+/// was trashed, restoring the JPEG is attempted before returning. A failed
+/// rollback reports both errors and the paths needed for manual recovery.
 pub fn trash_pair(jpeg: Option<&Path>, raf: Option<&Path>) -> Result<TrashedPair, String> {
+    trash_pair_with(jpeg, raf, trash_file, restore_file)
+}
+
+fn trash_pair_with<T, R>(
+    jpeg: Option<&Path>,
+    raf: Option<&Path>,
+    mut trash_one: T,
+    mut restore_one: R,
+) -> Result<TrashedPair, String>
+where
+    T: FnMut(&Path) -> Result<PathBuf, String>,
+    R: FnMut(&Path, &Path) -> Result<(), String>,
+{
     let trashed_jpeg = match jpeg {
-        Some(p) => Some((p.to_path_buf(), trash_file(p)?)),
+        Some(p) => Some((p.to_path_buf(), trash_one(p)?)),
         None => None,
     };
     let trashed_raf = match raf {
-        Some(p) => match trash_file(p) {
+        Some(p) => match trash_one(p) {
             Ok(t) => Some(t),
             Err(e) => {
                 // Roll back: restore the JPEG from the Trash.
                 if let Some((orig, in_trash)) = &trashed_jpeg {
-                    let _ = move_file(in_trash, orig);
+                    return match restore_one(in_trash, orig) {
+                        Ok(()) => Err(format!("RAF trash failed, JPEG restored: {e}")),
+                        Err(rollback) => Err(format!(
+                            "RAF trash failed: {e}; JPEG rollback failed: {rollback}. \
+                             The JPEG may still be in the Trash at {}; verify it and restore it \
+                             to {} before retrying",
+                            in_trash.display(),
+                            orig.display()
+                        )),
+                    };
                 }
-                return Err(format!("RAF trash failed, JPEG restored: {e}"));
+                return Err(format!("RAF trash failed: {e}"));
             }
         },
         None => None,
@@ -161,5 +184,36 @@ mod tests {
             "JPEG must be rolled back when RAF trash fails"
         );
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn pair_reports_when_raf_trash_and_jpeg_rollback_both_fail() {
+        let jpeg = Path::new("/photos/DSCF0001.JPG");
+        let raf = Path::new("/photos/DSCF0001.RAF");
+        let trashed_jpeg = PathBuf::from("/Trash/DSCF0001.JPG");
+
+        let error = trash_pair_with(
+            Some(jpeg),
+            Some(raf),
+            |path| {
+                if path == jpeg {
+                    Ok(trashed_jpeg.clone())
+                } else {
+                    Err("injected RAF trash failure".into())
+                }
+            },
+            |_in_trash, _original| Err("injected JPEG restore failure".into()),
+        )
+        .err()
+        .expect("the pair operation must fail");
+
+        assert!(error.contains("injected RAF trash failure"));
+        assert!(error.contains("injected JPEG restore failure"));
+        assert!(error.contains("/Trash/DSCF0001.JPG"));
+        assert!(error.contains("/photos/DSCF0001.JPG"));
+        assert!(
+            !error.contains("JPEG restored"),
+            "a failed rollback must never be reported as restored: {error}"
+        );
     }
 }

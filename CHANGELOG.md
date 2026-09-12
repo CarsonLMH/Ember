@@ -6,7 +6,11 @@ after the commit means it was built with uncommitted changes. Code listed here
 is only in your running app if it was built at or after that change landed —
 when in doubt, ask a session to rebuild.
 
-## 1.4.0 — 2026-08-23
+## Unreleased
+
+- Fix: when trashing a JPEG+RAF pair fails after the JPEG moved, Ember now
+  reports a failed rollback honestly—with both errors and the two recovery
+  paths—instead of claiming the JPEG was restored.
 
 - The `?` shortcut sheet is now grouped by intent, with exact-rating and
   rating-or-more filters separated so the right chord is easy to find. It is
@@ -29,6 +33,9 @@ when in doubt, ask a session to rebuild.
   the exact-rating filter.
 - Ratings now stay on the current photo by default. `V` still enables and
   remembers auto-advance when wanted.
+
+## 1.4.0 — 2026-08-23
+
 - People and Trash are now real right-column sidebars — opaque, full height,
   their own scroll — instead of cards floating over the metadata panel. One
   takes the column at a time (`p` / the trash button; `i` swaps back to
