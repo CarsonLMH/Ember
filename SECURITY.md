@@ -13,6 +13,23 @@ exist, security fixes target the current `main` branch.
 Do not trust an executable presented as an official public Ember build. The
 project does not currently publish one.
 
+## Dependency status
+
+CI audits the npm production dependency graph and verifies registry signatures.
+As of 2026-09-12, `npm audit --omit=dev` reports zero vulnerabilities and
+`npm audit signatures` verifies all 878 installed packages (201 with registry
+attestations).
+
+The full npm graph is not clean: the same lockfile currently reports 24
+vulnerable dev-tool package entries (18 high, 6 moderate), concentrated in the
+optional Tauri MCP bridge, WebdriverIO/Tauri test harness, and Vitest/Storybook
+chains. These tools are outside the npm production dependency graph, but they
+still matter on contributor and CI machines. Some upstream fixes require
+incompatible changes and the MCP chain has no complete current resolution, so
+the project records this debt instead of using `npm audit fix --force` or
+pretending it does not exist. Re-run both audit commands for current results;
+Dependabot proposes bounded updates for review.
+
 ## Report a vulnerability privately
 
 Do not open a public issue, pull request, discussion, or comment for a suspected
