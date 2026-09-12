@@ -30,6 +30,11 @@ const DEFAULTS: &[(&str, &[&str], &str)] = &[
     ("filter_star3", &["Shift+3"], "Filter: exactly ★★★"),
     ("filter_star4", &["Shift+4"], "Filter: exactly ★★★★"),
     ("filter_star5", &["Shift+5"], "Filter: exactly ★★★★★"),
+    ("filter_min1", &["Ctrl+Shift+1"], "Filter: ★ or more"),
+    ("filter_min2", &["Ctrl+Shift+2"], "Filter: ★★ or more"),
+    ("filter_min3", &["Ctrl+Shift+3"], "Filter: ★★★ or more"),
+    ("filter_min4", &["Ctrl+Shift+4"], "Filter: ★★★★ or more"),
+    ("filter_min5", &["Ctrl+Shift+5"], "Filter: ★★★★★"),
     ("recipe_filter", &["c"], "Recipe filter quick-switcher"),
     ("tag_palette", &["g"], "Tag palette"),
     ("tag_filter", &["Shift+g"], "Tag filter quick-switcher"),
@@ -186,6 +191,12 @@ mod tests {
         assert_eq!(trash.keys, vec!["j"], "file overrides default");
         let next = map.bindings.iter().find(|b| b.action == "next").unwrap();
         assert_eq!(next.keys[0], "ArrowRight", "missing actions keep defaults");
+        let minimum = map
+            .bindings
+            .iter()
+            .find(|b| b.action == "filter_min3")
+            .unwrap();
+        assert_eq!(minimum.keys, vec!["Ctrl+Shift+3"]);
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

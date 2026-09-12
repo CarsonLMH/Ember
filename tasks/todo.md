@@ -37,16 +37,16 @@ make automated harnesses move explicitly instead of relying on the preference.
 
 **Acceptance criteria:**
 
-- [ ] Every minimum mode includes N through 5 and excludes ratings below N.
-- [ ] Exact-star filters are unchanged and all star filters AND-combine with
+- [x] Every minimum mode includes N through 5 and excludes ratings below N.
+- [x] Exact-star filters are unchanged and all star filters AND-combine with
       recipe, tag, person, and focus filters.
-- [ ] New modes survive folder reopen through the existing persisted text field.
+- [x] New modes survive folder reopen through the existing persisted text field.
 
 **Verification:**
 
-- [ ] Pure threshold matrix tests pass for all ratings and modes.
-- [ ] Key parser tests prove shifted digit recovery with Ctrl held.
-- [ ] Rust keymap tests prove new defaults coexist with old user overrides.
+- [x] Pure threshold matrix tests pass for all ratings and modes.
+- [x] Key parser tests prove shifted digit recovery with Ctrl held.
+- [x] Rust keymap tests prove new defaults coexist with old user overrides.
 
 **Dependencies:** None
 
@@ -58,9 +58,9 @@ make automated harnesses move explicitly instead of relying on the preference.
 
 ## Checkpoint A: Culling semantics
 
-- [ ] `npm test` passes.
-- [ ] `npm run build` passes.
-- [ ] Rating acknowledgement ordering and filter membership are reviewed.
+- [x] `npm test` passes.
+- [x] `npm run build` passes.
+- [x] Rating acknowledgement ordering and filter membership are reviewed.
 
 ## Task 3: Remove the warm-start filmstrip jump
 

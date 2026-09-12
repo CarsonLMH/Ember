@@ -32,6 +32,11 @@ const FILTER_LABEL: Record<string, string> = {
   star3: '★★★ only',
   star4: '★★★★ only',
   star5: '★★★★★ only',
+  star1plus: '★ or more',
+  star2plus: '★★ or more',
+  star3plus: '★★★ or more',
+  star4plus: '★★★★ or more',
+  star5plus: '★★★★★',
 };
 
 function PerfHud() {
@@ -411,6 +416,8 @@ export default function App() {
             void session.rate(Number(action.slice(4)), e.timeStamp);
           } else if (action.startsWith('filter_star')) {
             session.setFilter(`star${action.slice(11)}` as session.FilterMode);
+          } else if (action.startsWith('filter_min')) {
+            session.setFilter(`star${action.slice(10)}plus` as session.FilterMode);
           }
       }
     };

@@ -10,10 +10,29 @@ export type FilterMode =
   | 'star2'
   | 'star3'
   | 'star4'
-  | 'star5';
+  | 'star5'
+  | 'star1plus'
+  | 'star2plus'
+  | 'star3plus'
+  | 'star4plus'
+  | 'star5plus';
 export type SortMode = 'capture' | 'name' | 'rating';
 
-export const FILTERS: FilterMode[] = ['all', 'unstarred', 'starred', 'star1', 'star2', 'star3', 'star4', 'star5'];
+export const FILTERS: FilterMode[] = [
+  'all',
+  'unstarred',
+  'starred',
+  'star1',
+  'star2',
+  'star3',
+  'star4',
+  'star5',
+  'star1plus',
+  'star2plus',
+  'star3plus',
+  'star4plus',
+  'star5plus',
+];
 export const SORTS: SortMode[] = ['capture', 'name', 'rating'];
 
 export function byCaptureOrder(a: Photo, b: Photo): number {
@@ -94,6 +113,7 @@ export function passesFilter(p: Photo, filter: FilterMode): boolean {
     case 'starred':
       return p.rating > 0;
     default:
+      if (filter.endsWith('plus')) return p.rating >= Number(filter.slice(4, 5));
       return p.rating === Number(filter.slice(4));
   }
 }

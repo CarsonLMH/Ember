@@ -21,7 +21,9 @@ A fast, reliable macOS photo-culling app for one user, built to replace a commer
 2. **First pass**: arrow through everything. `1–5` stars standouts in place (`V`
    opts into auto-advance), `X` trashes garbage, arrows skip B-roll. All
    navigation ≤50ms per flip.
-3. **Tightening passes**: filter to **Unstarred** (survivors) or **Starred** (tighten the top), repeat. Filters: All / Unstarred / Starred / exact star level / recipe / unknown-recipe — combinable (AND).
+3. **Tightening passes**: filter to **Unstarred** (survivors) or **Starred**
+   (tighten the top), repeat. Filters: All / Unstarred / Starred / exact star
+   level / N stars or more / recipe / unknown-recipe — combinable (AND).
 4. **Resume**: reopening a half-culled folder restores sort, filter, and exact position. No seen-tracking.
 5. **Session stats** in HUD: total / starred / unstarred / trashed.
 
@@ -43,7 +45,11 @@ A fast, reliable macOS photo-culling app for one user, built to replace a commer
 
 ## 6. Keyboard (defaults — all remappable)
 
-`←/→` prev/next · `1–5` stars · `0` clear · `X`/`Del` trash · `Z` 100% · `F` AF-point 100% · `A` AF overlay · `H` histogram · `B` blinkies · `I` EXIF · `T` filmstrip · `V` auto-advance · `U` cycle filter · `S` sort · `R` refresh · `Cmd+Z/Shift+Z` undo/redo · `?` cheat sheet.
+`←/→` prev/next · `1–5` stars · `0` clear · `X`/`Del` trash ·
+`Shift+1–5` exact-star filter · `Ctrl+Shift+1–5` N-or-more filter · `Z` 100% ·
+`F` AF-point 100% · `A` AF overlay · `H` histogram · `B` blinkies · `I` EXIF ·
+`T` filmstrip · `V` auto-advance · `U` cycle filter · `S` sort · `R` refresh ·
+`Cmd+Z/Shift+Z` undo/redo · `?` cheat sheet.
 Remapping via a human-editable config file (change a line, relaunch); `?` overlay always reflects actual binds. In-app editor is post-v1.
 
 ## 7. Durability & persistence

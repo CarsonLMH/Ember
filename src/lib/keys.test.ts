@@ -22,6 +22,7 @@ describe('actionFor', () => {
       { action: 'redo', keys: ['Cmd+Shift+z'], label: 'Redo' },
       { action: 'open_folder', keys: ['Cmd+o'], label: 'Open folder' },
       { action: 'filter_star1', keys: ['Shift+1'], label: 'Filter ★' },
+      { action: 'filter_min3', keys: ['Ctrl+Shift+3'], label: 'Filter ★★★ or more' },
       { action: 'cheat_sheet', keys: ['?'], label: 'Cheat sheet' },
       { action: 'perf_hud', keys: ['`'], label: 'Perf HUD' },
     ]);
@@ -49,6 +50,9 @@ describe('actionFor', () => {
 
   it('recovers shifted digits from the code', () => {
     expect(actionFor(ev({ key: '!', code: 'Digit1', shiftKey: true }))).toBe('filter_star1');
+    expect(
+      actionFor(ev({ key: '#', code: 'Digit3', ctrlKey: true, shiftKey: true })),
+    ).toBe('filter_min3');
   });
 
   it('matches symbol bindings where Shift is implicit', () => {

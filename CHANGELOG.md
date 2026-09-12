@@ -8,6 +8,8 @@ when in doubt, ask a session to rebuild.
 
 ## 1.4.0 — 2026-08-23
 
+- `Ctrl+Shift+1–5` filters to that star rating or higher; `Shift+1–5` remains
+  the exact-rating filter.
 - Ratings now stay on the current photo by default. `V` still enables and
   remembers auto-advance when wanted.
 - People and Trash are now real right-column sidebars — opaque, full height,

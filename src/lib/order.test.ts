@@ -79,6 +79,17 @@ describe('passesFilter', () => {
     expect(passesFilter(photo({ rating: 3 }), 'star3')).toBe(true);
     expect(passesFilter(photo({ rating: 4 }), 'star3')).toBe(false);
   });
+
+  it('starNplus includes N through five and excludes every lower rating', () => {
+    for (const minimum of [1, 2, 3, 4, 5] as const) {
+      const mode = `star${minimum}plus` as const;
+      for (let rating = 0; rating <= 5; rating++) {
+        expect(passesFilter(photo({ rating }), mode), `${mode} at ${rating} stars`).toBe(
+          rating >= minimum,
+        );
+      }
+    }
+  });
 });
 
 describe('passesTagFilter', () => {
