@@ -19,6 +19,13 @@ when in doubt, ask a session to rebuild.
   the photo and history step marked trashed so the operation stays retryable;
   a failed JPEG rollback during paired restore reports both errors and the
   affected paths instead of hiding the split pair.
+- Privacy: **Delete all face data** now also removes saved face-calibration
+  reports containing names, IDs, and recognition scores. Report publication is
+  ordered against deletion across Ember processes, and failed cleanup stays
+  persistently owed for retry at the next launch.
+- Dev-only: real-photo storm gates now fail when folder-open timing is missing
+  or above one second, and the people gate cannot pass if its temporary person
+  fails to delete.
 
 - The `?` shortcut sheet is now grouped by intent, with exact-rating and
   rating-or-more filters separated so the right chord is easy to find. It is

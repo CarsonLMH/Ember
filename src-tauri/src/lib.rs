@@ -1036,12 +1036,14 @@ fn face_calibration_report(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    let report = {
+    let (wipe_seq, report) = {
         let conn = state.store.lock_conn();
+        let wipe_seq = facestore::wipe_seq(&conn).map_err(|e| e.to_string())?;
         let Some((gen, ..)) = facestore::current_gen(&conn).map_err(|e| e.to_string())? else {
             return Err("no photos indexed yet".into());
         };
-        facestore::calibration_data(&conn, gen).map_err(|e| e.to_string())?
+        let report = facestore::calibration_data(&conn, gen).map_err(|e| e.to_string())?;
+        (wipe_seq, report)
     };
     let dir = app
         .path()
@@ -1054,11 +1056,18 @@ fn face_calibration_report(
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let path = dir.join(format!("faces-calibration-{ts}.json"));
-    std::fs::write(
+    let bytes = serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?;
+    let outcome = facestore::publish_calibration_report(
+        &mut state.store.lock_conn(),
+        wipe_seq,
         &path,
-        serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
+        &bytes,
+    )?;
+    if outcome == facestore::PublishOutcome::Refused {
+        return Err(
+            "Face data was disabled or deleted before the calibration report could be saved".into(),
+        );
+    }
     Ok(serde_json::json!({
         "path": path.to_string_lossy(),
         "summary": report["summary"],
@@ -1208,6 +1217,52 @@ fn face_scan_status(
     }))
 }
 
+/// Sweep one privacy-delete generation's face artifacts and conditionally
+/// discharge its persisted cleanup debt. The final boolean says whether this
+/// sweep still owned the current generation and therefore cleared that debt.
+fn purge_face_artifacts_for_current_wipe(
+    store: &Store,
+    preview: &preview::PreviewState,
+    config_dir: &std::path::Path,
+) -> Result<(usize, usize, bool), String> {
+    // Capture immediately before touching the filesystem. If another process
+    // commits Delete-all while this sweep is running, the guarded clear below
+    // refuses and leaves that newer cleanup debt persisted.
+    let sweep_wipe_seq = store
+        .face_artifact_wipe_seq()
+        .map_err(|e| format!("could not capture the face-artifact wipe generation: {e}"))?;
+    let removed = faces::purge_face_artifacts(preview, config_dir)?;
+    let debt_cleared = store
+        .clear_chip_sweep_pending_if_wipe_seq(sweep_wipe_seq)
+        .map_err(|e| {
+            format!("artifact files were removed, but their cleanup state could not be saved: {e}")
+        })?;
+    Ok((removed.0, removed.1, debt_cleared))
+}
+
+fn face_delete_result(
+    swept: Result<(usize, usize), String>,
+    mirror_error: Option<String>,
+) -> Result<(), String> {
+    match (swept, mirror_error) {
+        (Ok(_), None) => Ok(()),
+        (Err(cleanup), None) => Err(format!(
+            "Face data was deleted from the database and indexing is off, but derived face-artifact \
+             cleanup could not be completed ({cleanup}). Ember will retry at the next launch."
+        )),
+        (Ok(_), Some(mirror)) => Err(format!(
+            "Face data was deleted and indexing is off, but settings.toml could not be updated \
+             ({mirror}). Indexing stays off — the app rewrites the file at the next launch."
+        )),
+        (Err(cleanup), Some(mirror)) => Err(format!(
+            "Face data was deleted from the database and indexing is off, but derived face-artifact \
+             cleanup could not be completed ({cleanup}) and settings.toml also could not be updated \
+             ({mirror}). Ember will retry cleanup and rewrite the settings file at the next launch; \
+             the database keeps indexing off in the meantime."
+        )),
+    }
+}
+
 /// Privacy delete: wipes all face data AND durably disables indexing (in
 /// both processes — the DB is the authority). No automatic reindex follows.
 ///
@@ -1215,10 +1270,11 @@ fn face_scan_status(
 /// inside one SQLite writer-lock critical section (§Store::delete_face_data),
 /// so no concurrent toggle in the other process can leave the file saying
 /// `enabled = true` behind a disabled DB; if the file write fails, the DB
-/// stays authoritative at the next launch. Chip cleanup runs after the commit,
-/// when no publish can create a file any more — and if it cannot finish, this
-/// command reports the failure instead of claiming a successful deletion, with
-/// the DB's `chip_sweep_pending` flag keeping the retry owed.
+/// stays authoritative at the next launch. Derived face-artifact cleanup runs
+/// after the commit, when no guarded publish can create a file any more — and
+/// if it cannot finish, this command reports the failure instead of claiming a
+/// successful deletion. The legacy-named `chip_sweep_pending` DB flag keeps the
+/// whole cleanup retry owed, including face-calibration reports.
 #[tauri::command]
 fn delete_face_data(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let config_dir = state.config_dir.clone();
@@ -1227,22 +1283,13 @@ fn delete_face_data(state: tauri::State<'_, AppState>) -> Result<(), String> {
         .delete_face_data(&|enabled| settings::write_faces_enabled(&config_dir, enabled))
         .map_err(|e| e.to_string())?;
     state.naming_ops.lock().unwrap().clear();
-    let swept = faces::purge_chips(&state.preview);
-    if swept.is_ok() {
-        let _ = state.store.clear_chip_sweep_pending();
-    }
-    match (swept, outcome.mirror_error) {
-        (Ok(_), None) => Ok(()),
-        (Err(e), _) => Err(format!(
-            "Face data was deleted from the database and indexing is off, but some face image \
-             files could not be removed ({e}). They will be removed at the next launch — or \
-             delete ~/Library/Caches/com.cleung.ember yourself now."
-        )),
-        (Ok(_), Some(e)) => Err(format!(
-            "Face data was deleted and indexing is off, but settings.toml could not be updated \
-             ({e}). Indexing stays off — the app rewrites the file at the next launch."
-        )),
-    }
+    let swept = purge_face_artifacts_for_current_wipe(
+        state.store.as_ref(),
+        state.preview.as_ref(),
+        &config_dir,
+    )
+    .map(|(chips, reports, _)| (chips, reports));
+    face_delete_result(swept, outcome.mirror_error)
 }
 
 /// Throw away recognition's guesses in this folder, keeping every label the
@@ -1470,16 +1517,28 @@ pub fn run() {
                 }
                 Err(e) => eprintln!("faces: enabled-state sync failed: {e}"),
             }
-            // A privacy delete whose chip sweep failed (or was interrupted)
-            // leaves this flag set. Biometric files are not something to
-            // forget about, so the sweep is owed until one succeeds.
+            // A privacy delete whose derived-artifact sweep failed (or was
+            // interrupted) leaves this legacy-named flag set. Biometric files
+            // and face-calibration reports are not something to forget about,
+            // so the whole sweep is owed until one succeeds.
             if store.chip_sweep_pending().unwrap_or(false) {
-                match faces::purge_chips(&preview) {
-                    Ok(n) => {
-                        eprintln!("faces: completed a pending chip sweep ({n} files)");
-                        let _ = store.clear_chip_sweep_pending();
+                match purge_face_artifacts_for_current_wipe(
+                    store.as_ref(),
+                    preview.as_ref(),
+                    &data_dir,
+                ) {
+                    Ok((chips, reports, true)) => {
+                        eprintln!(
+                            "faces: completed a pending artifact sweep \
+                             ({chips} chips, {reports} calibration reports)"
+                        );
                     }
-                    Err(e) => eprintln!("faces: pending chip sweep still failing: {e}"),
+                    Ok((chips, reports, false)) => eprintln!(
+                        "faces: swept an older artifact generation \
+                         ({chips} chips, {reports} calibration reports); \
+                         a newer privacy delete still owns the retry debt"
+                    ),
+                    Err(e) => eprintln!("faces: pending artifact sweep still failing: {e}"),
                 }
             }
             // Cache budget: one delayed pass per launch, oldest folders first,
@@ -1608,6 +1667,26 @@ mod tests {
 
     fn pstr(p: &std::path::Path) -> Option<String> {
         Some(p.to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn face_delete_reports_artifact_and_settings_failures_together() {
+        let error = face_delete_result(
+            Err("injected artifact cleanup failure".into()),
+            Some("injected settings mirror failure".into()),
+        )
+        .expect_err("both failures must be surfaced");
+
+        assert!(
+            error.contains("injected artifact cleanup failure"),
+            "{error}"
+        );
+        assert!(
+            error.contains("injected settings mirror failure"),
+            "{error}"
+        );
+        assert!(error.contains("retry cleanup"), "{error}");
+        assert!(error.contains("rewrite the settings file"), "{error}");
     }
 
     #[test]

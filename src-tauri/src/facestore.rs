@@ -115,6 +115,13 @@ fn state_get_or(conn: &Connection, key: &str, default: i64) -> rusqlite::Result<
     Ok(state_get(conn, key).optional()?.unwrap_or(default))
 }
 
+/// Privacy-delete generation captured before preparing a calibration report.
+/// Older v5 databases may not have materialized the row yet, so zero is the
+/// backward-compatible value until the first delete bumps it.
+pub fn wipe_seq(conn: &Connection) -> rusqlite::Result<i64> {
+    state_get_or(conn, "wipe_seq", 0)
+}
+
 fn state_set(conn: &Connection, key: &str, value: i64) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO face_state (key, value) VALUES (?1, ?2)
@@ -612,7 +619,7 @@ pub fn commit_scan(
     Ok(CommitOutcome::Committed(chip_revision))
 }
 
-/// Whether a chip publish was allowed to happen.
+/// Whether a guarded face-artifact publish was allowed to happen.
 #[derive(Debug, PartialEq)]
 pub enum PublishOutcome {
     /// Files written.
@@ -620,6 +627,89 @@ pub enum PublishOutcome {
     /// A guard refused — a privacy delete landed, or these crops describe a
     /// detection the photo no longer has. Nothing was written.
     Refused,
+}
+
+/// Publish a face-calibration report under the same SQLite writer lock that
+/// orders Delete-all across Ember processes.
+///
+/// Report bytes are computed in memory first. The captured `wipe_seq` is then
+/// rechecked after `BEGIN IMMEDIATE`: if a delete committed in between (even if
+/// someone has since re-enabled indexing), publication refuses. If publication
+/// takes the lock first, Delete-all waits, commits next, and its artifact sweep
+/// removes the report. This prevents a parked reporter from recreating personal
+/// data after deletion has returned.
+pub fn publish_calibration_report(
+    conn: &mut Connection,
+    expected_wipe_seq: i64,
+    report_path: &Path,
+    bytes: &[u8],
+) -> Result<PublishOutcome, String> {
+    publish_calibration_report_with(
+        conn,
+        expected_wipe_seq,
+        report_path,
+        bytes,
+        |path, bytes| std::fs::write(path, bytes),
+    )
+}
+
+fn failed_calibration_report(report_path: &Path, failure: String) -> String {
+    match std::fs::remove_file(report_path) {
+        Ok(()) => failure,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => failure,
+        Err(cleanup) => format!(
+            "{failure}; failed to remove incomplete face-calibration report {}: {cleanup}",
+            report_path.display()
+        ),
+    }
+}
+
+fn publish_calibration_report_with<W>(
+    conn: &mut Connection,
+    expected_wipe_seq: i64,
+    report_path: &Path,
+    bytes: &[u8],
+    write: W,
+) -> Result<PublishOutcome, String>
+where
+    W: FnOnce(&Path, &[u8]) -> std::io::Result<()>,
+{
+    let valid_name = report_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("faces-calibration-") && name.ends_with(".json"));
+    let in_report_dir = report_path
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|name| name == "perf-reports");
+    if !valid_name || !in_report_dir {
+        return Err(format!(
+            "invalid face-calibration report path: {}",
+            report_path.display()
+        ));
+    }
+
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    let enabled = index_enabled(&tx).map_err(|e| e.to_string())?;
+    let current_wipe_seq = wipe_seq(&tx).map_err(|e| e.to_string())?;
+    if !enabled || current_wipe_seq != expected_wipe_seq {
+        return Ok(PublishOutcome::Refused);
+    }
+    if let Err(e) = write(report_path, bytes) {
+        return Err(failed_calibration_report(
+            report_path,
+            format!("face-calibration report write failed: {e}"),
+        ));
+    }
+    if let Err(e) = tx.commit() {
+        return Err(failed_calibration_report(
+            report_path,
+            format!("face-calibration report commit failed: {e}"),
+        ));
+    }
+    Ok(PublishOutcome::Published)
 }
 
 /// Write face chips to the cache, under the DB write lock — the cross-process
@@ -1341,12 +1431,13 @@ impl Store {
     /// deleted), bumps the epoch, wipes every face-derived row and mirrors
     /// `enabled = false` — all in the transaction described above.
     ///
-    /// Chip files are the caller's cleanup, and it is safe **after** this
-    /// commit: from the commit on, every chip publish takes the same writer
-    /// lock, finds the rows gone and the epoch moved, and writes nothing at
-    /// all (chips are held in memory until that check passes). The wipe also
-    /// sets `chip_sweep_pending`, so a cleanup that fails or is interrupted is
-    /// retried at the next launch instead of being forgotten.
+    /// Derived face files are the caller's cleanup, and it is safe **after**
+    /// this commit: from the commit on, every chip publish takes the same writer
+    /// lock, finds the rows gone and the epoch moved, and writes nothing at all
+    /// (chips are held in memory until that check passes). The wipe also sets
+    /// the legacy-named `chip_sweep_pending`, so a chip or calibration-report
+    /// cleanup that fails or is interrupted is retried at the next launch
+    /// instead of being forgotten.
     pub fn delete_face_data(
         &self,
         mirror: &dyn Fn(bool) -> std::io::Result<()>,
@@ -1355,14 +1446,35 @@ impl Store {
         self.commit_enabled_intent(false, true, seq, mirror)
     }
 
-    /// Whether a privacy delete's chip sweep is still owed. Set by the wipe,
-    /// cleared only by a sweep that removed everything it found.
+    /// Whether a privacy delete's derived-artifact sweep is still owed. The DB
+    /// key keeps its historical name; callers clear it only after both chips
+    /// and face-calibration reports have been swept successfully.
     pub fn chip_sweep_pending(&self) -> rusqlite::Result<bool> {
         Ok(state_get_or(&self.lock_conn(), "chip_sweep_pending", 0)? != 0)
     }
 
-    pub fn clear_chip_sweep_pending(&self) -> rusqlite::Result<()> {
-        state_set(&self.lock_conn(), "chip_sweep_pending", 0)
+    /// Capture the privacy-delete generation immediately before sweeping face
+    /// artifacts. A successful sweep may clear the persisted retry debt only
+    /// while this generation is still current.
+    pub fn face_artifact_wipe_seq(&self) -> rusqlite::Result<i64> {
+        wipe_seq(&self.lock_conn())
+    }
+
+    /// Clear a completed artifact sweep's retry debt without stealing a newer
+    /// delete's debt. `BEGIN IMMEDIATE` makes the comparison and clear one
+    /// writer-ordered operation across Ember processes.
+    pub fn clear_chip_sweep_pending_if_wipe_seq(
+        &self,
+        expected_wipe_seq: i64,
+    ) -> rusqlite::Result<bool> {
+        let mut conn = self.lock_conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if wipe_seq(&tx)? != expected_wipe_seq {
+            return Ok(false);
+        }
+        state_set(&tx, "chip_sweep_pending", 0)?;
+        tx.commit()?;
+        Ok(true)
     }
 
     /// Launch-time reconciliation, in one writer-lock critical section.
@@ -3134,6 +3246,182 @@ mod tests {
                 .unwrap()
                 .scanned,
             0
+        );
+    }
+
+    #[test]
+    fn a_stale_calibration_report_cannot_publish_after_delete_and_reenable() {
+        let (store, mut reporter, _, path) = setup();
+        let reports = path.parent().unwrap().join("perf-reports");
+        std::fs::create_dir_all(&reports).unwrap();
+        let report_path = reports.join("faces-calibration-stale.json");
+        let wipe_seq = state_get(&reporter, "wipe_seq").unwrap();
+
+        store.set_faces_enabled(false, &no_mirror).unwrap();
+        assert_eq!(
+            publish_calibration_report(
+                &mut reporter,
+                wipe_seq,
+                &report_path,
+                br#"{"name":"Synthetic Person"}"#,
+            )
+            .unwrap(),
+            PublishOutcome::Refused,
+            "a disabled face system cannot publish retained personal data"
+        );
+        store.set_faces_enabled(true, &no_mirror).unwrap();
+
+        store.delete_face_data(&no_mirror).unwrap();
+        store.set_faces_enabled(true, &no_mirror).unwrap();
+        let outcome = publish_calibration_report(
+            &mut reporter,
+            wipe_seq,
+            &report_path,
+            br#"{"name":"Synthetic Person"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(outcome, PublishOutcome::Refused);
+        assert!(
+            !report_path.exists(),
+            "re-enabling after a delete must not revive the stale report"
+        );
+    }
+
+    #[test]
+    fn a_failed_calibration_report_write_removes_the_final_path() {
+        let (_store, mut reporter, _, path) = setup();
+        let reports = path.parent().unwrap().join("perf-reports");
+        std::fs::create_dir_all(&reports).unwrap();
+        let report_path = reports.join("faces-calibration-partial.json");
+        let wipe_seq = state_get(&reporter, "wipe_seq").unwrap();
+
+        let error = publish_calibration_report_with(
+            &mut reporter,
+            wipe_seq,
+            &report_path,
+            br#"{"name":"Synthetic Person"}"#,
+            |path, bytes| {
+                std::fs::write(path, bytes)?;
+                Err(std::io::Error::other("injected writer failure"))
+            },
+        )
+        .expect_err("an incomplete report write must fail publication");
+
+        assert!(error.contains("injected writer failure"), "{error}");
+        assert!(
+            !report_path.exists(),
+            "a failed write must not leave its final privacy-report path"
+        );
+    }
+
+    #[test]
+    fn a_parked_calibration_publish_finishes_before_delete_sweeps_it() {
+        let (store, mut reporter, _, path) = setup();
+        let app_data = path.parent().unwrap().to_path_buf();
+        let reports = app_data.join("perf-reports");
+        std::fs::create_dir_all(&reports).unwrap();
+        let report_path = reports.join("faces-calibration-racing.json");
+        let wipe_seq = state_get(&reporter, "wipe_seq").unwrap();
+        let preview = std::sync::Arc::new(crate::preview::PreviewState::new(
+            app_data.join("cache"),
+            crate::exposure::BlinkiesCfg::default(),
+        ));
+        std::fs::create_dir_all(preview.cache_dir()).unwrap();
+
+        let (parked_tx, parked_rx) = crossbeam_channel::bounded::<()>(1);
+        let (release_tx, release_rx) = crossbeam_channel::bounded::<()>(1);
+        let writer_path = report_path.clone();
+        let writer = std::thread::spawn(move || {
+            publish_calibration_report_with(
+                &mut reporter,
+                wipe_seq,
+                &writer_path,
+                br#"{"name":"Synthetic Person"}"#,
+                |path, bytes| {
+                    parked_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    std::fs::write(path, bytes)
+                },
+            )
+            .unwrap()
+        });
+        parked_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("reporter must park while holding SQLite's writer lock");
+
+        let (delete_done_tx, delete_done_rx) = crossbeam_channel::bounded::<()>(1);
+        let delete_app_data = app_data.clone();
+        let deleter = std::thread::spawn(move || {
+            store.delete_face_data(&no_mirror).unwrap();
+            let sweep_wipe_seq = store.face_artifact_wipe_seq().unwrap();
+            crate::faces::purge_face_artifacts(&preview, &delete_app_data).unwrap();
+            assert!(store
+                .clear_chip_sweep_pending_if_wipe_seq(sweep_wipe_seq)
+                .unwrap());
+            delete_done_tx.send(()).unwrap();
+            store
+        });
+        assert!(
+            delete_done_rx
+                .recv_timeout(std::time::Duration::from_millis(250))
+                .is_err(),
+            "delete completed while report publication held the writer lock"
+        );
+
+        release_tx.send(()).unwrap();
+        assert_eq!(writer.join().unwrap(), PublishOutcome::Published);
+        let store = deleter.join().unwrap();
+        assert!(!report_path.exists(), "the later delete sweep must win");
+        assert!(!store.chip_sweep_pending().unwrap());
+    }
+
+    #[test]
+    fn a_parked_old_artifact_sweep_cannot_clear_a_newer_delete_debt() {
+        let (store_a, _worker, _, path) = setup();
+        store_a.delete_face_data(&no_mirror).unwrap();
+        let store_b = Store::new(&path).unwrap();
+        let app_data = path.parent().unwrap().to_path_buf();
+        let reports = app_data.join("perf-reports");
+        std::fs::create_dir_all(&reports).unwrap();
+        let old_report = reports.join("faces-calibration-old-sweep.json");
+        std::fs::write(&old_report, b"old private report").unwrap();
+        let preview = crate::preview::PreviewState::new(
+            app_data.join("cache"),
+            crate::exposure::BlinkiesCfg::default(),
+        );
+        std::fs::create_dir_all(preview.cache_dir()).unwrap();
+
+        let (parked_tx, parked_rx) = crossbeam_channel::bounded::<i64>(1);
+        let (release_tx, release_rx) = crossbeam_channel::bounded::<()>(1);
+        let old_sweeper = std::thread::spawn(move || {
+            let old_wipe_seq = store_a.face_artifact_wipe_seq().unwrap();
+            crate::faces::purge_face_artifacts(&preview, &app_data).unwrap();
+            parked_tx.send(old_wipe_seq).unwrap();
+            release_rx.recv().unwrap();
+            store_a
+                .clear_chip_sweep_pending_if_wipe_seq(old_wipe_seq)
+                .unwrap()
+        });
+        let old_wipe_seq = parked_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the old sweep must park after capturing its wipe generation");
+        assert!(!old_report.exists(), "the old filesystem sweep completed");
+
+        store_b.delete_face_data(&no_mirror).unwrap();
+        assert!(
+            store_b.face_artifact_wipe_seq().unwrap() > old_wipe_seq,
+            "the second connection committed a newer privacy delete"
+        );
+        release_tx.send(()).unwrap();
+
+        assert!(
+            !old_sweeper.join().unwrap(),
+            "an old sweep must not claim a newer delete's artifact debt"
+        );
+        assert!(
+            store_b.chip_sweep_pending().unwrap(),
+            "the newer delete must remain owed after the old sweep finishes"
         );
     }
 

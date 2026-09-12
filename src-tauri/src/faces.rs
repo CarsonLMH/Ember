@@ -448,6 +448,65 @@ pub fn purge_chips(preview: &PreviewState) -> Result<usize, String> {
     preview.delete_all_face_chips()
 }
 
+/// Delete every persisted artifact that contains face-derived personal data.
+///
+/// The legacy-named `chip_sweep_pending` DB flag is the shared retry debt for
+/// this whole operation: callers clear it only when both the cache and report
+/// sweeps succeed. Ordinary `report-*.json` flip reports are deliberately not
+/// face data and remain available as performance evidence.
+pub fn purge_face_artifacts(
+    preview: &PreviewState,
+    config_dir: &Path,
+) -> Result<(usize, usize), String> {
+    let chips = purge_chips(preview);
+    let reports = purge_calibration_reports(config_dir);
+    match (chips, reports) {
+        (Ok(chips), Ok(reports)) => Ok((chips, reports)),
+        (Err(chips), Ok(_)) => Err(format!("face-chip cleanup failed: {chips}")),
+        (Ok(_), Err(reports)) => Err(format!("face-calibration report cleanup failed: {reports}")),
+        (Err(chips), Err(reports)) => Err(format!(
+            "face-chip cleanup failed: {chips}; face-calibration report cleanup failed: {reports}"
+        )),
+    }
+}
+
+fn purge_calibration_reports(config_dir: &Path) -> Result<usize, String> {
+    let reports_dir = config_dir.join("perf-reports");
+    let entries = match std::fs::read_dir(&reports_dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(err) => return Err(format!("report directory unreadable: {err}")),
+    };
+    let mut removed = 0usize;
+    let mut failures = Vec::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => {
+                failures.push(format!("directory entry unreadable: {err}"));
+                continue;
+            }
+        };
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !(name.starts_with("faces-calibration-") && name.ends_with(".json")) {
+            continue;
+        }
+        match std::fs::remove_file(entry.path()) {
+            Ok(()) => removed += 1,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => failures.push(format!("{}: {err}", entry.path().display())),
+        }
+    }
+    if failures.is_empty() {
+        Ok(removed)
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
 /// Chip repair: the face/ route 404s on a missing chip and enqueues the photo
 /// here. One dedicated thread (never the protocol pool), deduplicated by
 /// photo id, one preview decode regenerates ALL of that photo's missing
@@ -1562,6 +1621,67 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    #[test]
+    fn face_artifact_sweep_removes_only_calibration_reports() {
+        let (dir, _store, _worker, preview, _revision) = chip_setup();
+        let reports = dir.join("app-data").join("perf-reports");
+        std::fs::create_dir_all(&reports).unwrap();
+        let first = reports.join("faces-calibration-100.json");
+        let second = reports.join("faces-calibration-library.json");
+        let flip = reports.join("report-100.json");
+        let near_match = reports.join("faces-calibration-100.json.backup");
+        std::fs::write(&first, b"private face report").unwrap();
+        std::fs::write(&second, b"private face report").unwrap();
+        std::fs::write(&flip, b"ordinary flip report").unwrap();
+        std::fs::write(&near_match, b"not a generated calibration report").unwrap();
+
+        let (chips, calibration_reports) =
+            purge_face_artifacts(&preview, &dir.join("app-data")).unwrap();
+
+        assert_eq!(chips, 0);
+        assert_eq!(calibration_reports, 2);
+        assert!(!first.exists());
+        assert!(!second.exists());
+        assert!(flip.exists(), "ordinary performance reports must survive");
+        assert!(
+            near_match.exists(),
+            "only the generated filename shape is private"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_calibration_report_sweep_keeps_the_cleanup_owed() {
+        let (dir, store, _worker, preview, _revision) = chip_setup();
+        let reports = dir.join("app-data").join("perf-reports");
+        std::fs::create_dir_all(&reports).unwrap();
+        // A directory where a report file should be: `remove_file` fails
+        // deterministically on every supported platform and for every user.
+        let blocked = reports.join("faces-calibration-blocked.json");
+        std::fs::create_dir(&blocked).unwrap();
+
+        store.delete_face_data(&no_mirror).unwrap();
+        assert!(store.chip_sweep_pending().unwrap());
+        let err = purge_face_artifacts(&preview, &dir.join("app-data"))
+            .expect_err("the privacy sweep must report the retained face report");
+        assert!(err.contains("faces-calibration-blocked.json"), "{err}");
+        assert!(
+            store.chip_sweep_pending().unwrap(),
+            "a failed report cleanup must leave the persisted retry owed"
+        );
+
+        // The launch-time retry clears the shared artifact debt only after
+        // every chip and calibration report is gone.
+        std::fs::remove_dir(&blocked).unwrap();
+        let sweep_wipe_seq = store.face_artifact_wipe_seq().unwrap();
+        purge_face_artifacts(&preview, &dir.join("app-data")).unwrap();
+        assert!(store
+            .clear_chip_sweep_pending_if_wipe_seq(sweep_wipe_seq)
+            .unwrap());
+        assert!(!store.chip_sweep_pending().unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A sweep that cannot remove every biometric file must not let the delete
     /// report success, and the DB must keep the cleanup owed until one does.
     #[test]
@@ -1598,8 +1718,11 @@ mod tests {
 
         // The next launch retries it; only a clean sweep clears the flag.
         std::fs::remove_dir(dir.join("cache").join(format!("{PID}-f7.jpg"))).unwrap();
+        let sweep_wipe_seq = store.face_artifact_wipe_seq().unwrap();
         purge_chips(&preview).unwrap();
-        store.clear_chip_sweep_pending().unwrap();
+        assert!(store
+            .clear_chip_sweep_pending_if_wipe_seq(sweep_wipe_seq)
+            .unwrap());
         assert!(!store.chip_sweep_pending().unwrap());
         assert!(cache_is_chip_free(&dir));
         std::fs::remove_dir_all(&dir).unwrap();
