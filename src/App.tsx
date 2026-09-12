@@ -608,8 +608,10 @@ export default function App() {
 
   return (
     <div className={`app${immersive ? ' immersive' : ''}`} data-immersive={immersive}>
+      {/* A new folder owns a new virtual-scroll origin, even when its length
+          and restored cursor happen to match the previous folder. */}
       {showStrip && state.photos.length > 0 && (
-        <Filmstrip photos={state.photos} cursor={state.cursor} />
+        <Filmstrip key={state.folderId} photos={state.photos} cursor={state.cursor} />
       )}
       <div className="viewer-wrap">
         <canvas ref={canvasRef} className="viewer-canvas" />

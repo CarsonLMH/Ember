@@ -22,8 +22,9 @@ when in doubt, ask a session to rebuild.
 - Resizing the viewer by opening panels, toggling the filmstrip, or entering
   immersion now preserves the actual zoom percentage instead of shifting a
   100% inspection view.
-- The filmstrip now mounts directly at the current photo and requests its
-  already-virtualized thumbnails immediately, removing the warm-start lag.
+- The filmstrip now mounts directly at the current photo, resets cleanly when
+  switching folders, and requests its already-virtualized thumbnails
+  immediately, removing the warm-start lag.
 - `Ctrl+Shift+1–5` filters to that star rating or higher; `Shift+1–5` remains
   the exact-rating filter.
 - Ratings now stay on the current photo by default. `V` still enables and
