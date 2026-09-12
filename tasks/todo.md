@@ -162,7 +162,7 @@ launch the accepted app locally.
       accessibility, and durability checks pass.
 - [x] Normal and faces-active real-photo storms remain p99 <= 50 ms, zero
       steady-state miss serves, and cold open <= 1 s.
-- [ ] Installed app's build stamp matches the final commit and the prior app is
+- [x] Installed app's build stamp matches the final commit and the prior app is
       recoverable until launch verification succeeds.
 
 **Verification:** The commands and measurements above are the task. The legacy
@@ -178,5 +178,5 @@ fixture-quality issue is outside this requested feature set.
 ## Checkpoint C: Complete
 
 - [x] All requested behavior is implemented and documented.
-- [ ] Every check run and every check omitted is reported.
-- [ ] Working tree is clean with small conventional commits.
+- [x] Every check run and every check omitted is reported.
+- [x] Working tree is clean with small conventional commits.
