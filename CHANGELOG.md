@@ -8,6 +8,12 @@ when in doubt, ask a session to rebuild.
 
 ## 1.4.0 — 2026-08-23
 
+- `Shift+T` enters a picture-only immersion mode; `Shift+T` or `Esc` restores
+  the exact previous panels and inspection overlays without stealing native
+  `Tab` focus traversal. Safety/error notices stay visible.
+- Resizing the viewer by opening panels, toggling the filmstrip, or entering
+  immersion now preserves the actual zoom percentage instead of shifting a
+  100% inspection view.
 - The filmstrip now mounts directly at the current photo and requests its
   already-virtualized thumbnails immediately, removing the warm-start lag.
 - `Ctrl+Shift+1–5` filters to that star rating or higher; `Shift+1–5` remains

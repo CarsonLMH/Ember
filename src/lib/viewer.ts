@@ -41,6 +41,9 @@ let nativeH = 0;
 let view: ViewState | null = null;
 let afPoint: AfPoint | null = null;
 let afVisible = false;
+/** Presentation-only mask for immersion mode. The underlying analysis state
+ * stays intact so leaving immersion restores exactly what the user enabled. */
+let decorationsVisible = true;
 
 let changeListeners: Array<() => void> = [];
 /** Listeners that only care about fit-mode DOM chrome (face badges) — see
@@ -153,6 +156,10 @@ function interactNow(): void {
 
 function resizeBackingStore(): void {
   if (!canvas || !ctx) return;
+  // `view.factor` is relative to fit, but a panel/filmstrip/immersion resize
+  // changes the fit scale. Preserve the actual native-pixel zoom so 100%
+  // remains 100% and a locked inspection point does not jump in scale.
+  const zoomScale = view ? fitScale() * view.factor : null;
   const dpr = window.devicePixelRatio || 1;
   const { clientWidth, clientHeight } = canvas;
   const w = Math.max(1, Math.round(clientWidth * dpr));
@@ -160,6 +167,10 @@ function resizeBackingStore(): void {
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w;
     canvas.height = h;
+    if (view && zoomScale !== null) {
+      const nextFit = fitScale();
+      if (nextFit > 0) view = clampView({ ...view, factor: zoomScale / nextFit });
+    }
   }
   requestDraw();
 }
@@ -281,6 +292,12 @@ export function setAf(point: AfPoint | null, visible: boolean): void {
   drawNow();
 }
 
+export function setDecorationsVisible(visible: boolean): void {
+  if (decorationsVisible === visible) return;
+  decorationsVisible = visible;
+  drawNow();
+}
+
 /** Clipping-warning overlay (RGBA mask, proportional to the full image).
  * It BLINKS — a ~1.1s cycle toggling the mask layer. Cost is one extra
  * repaint per phase (~2ms blit); zoom/pan frames just pick up the current
@@ -294,7 +311,7 @@ export function setBlinkies(bitmap: ImageBitmap | null): void {
     blinkOn = true;
     blinkTimer = setInterval(() => {
       blinkOn = !blinkOn;
-      drawNow();
+      if (decorationsVisible) drawNow();
     }, 550);
   } else if (!blinkies && blinkTimer) {
     clearInterval(blinkTimer);
@@ -412,8 +429,10 @@ function draw(): void {
     const dx = Math.round((cw - dw) / 2);
     const dy = Math.round((ch - dh) / 2);
     ctx.drawImage(bitmap, dx, dy, dw, dh);
-    if (alive(blinkies) && blinkOn) ctx.drawImage(blinkies, dx, dy, dw, dh);
-    drawAf(dx, dy, dw / nativeW, dh / nativeH);
+    if (decorationsVisible && alive(blinkies) && blinkOn) {
+      ctx.drawImage(blinkies, dx, dy, dw, dh);
+    }
+    if (decorationsVisible) drawAf(dx, dy, dw / nativeW, dh / nativeH);
     return;
   }
 
@@ -448,7 +467,7 @@ function draw(): void {
   } catch {
     return; // bitmap died between the alive() check and here; next draw recovers
   }
-  if (alive(blinkies) && blinkOn) {
+  if (decorationsVisible && alive(blinkies) && blinkOn) {
     const mScale = blinkies.width / nativeW;
     ctx.drawImage(
       blinkies,
@@ -462,8 +481,10 @@ function draw(): void {
       dh,
     );
   }
-  drawAf(dx - leftN * scale, dy - topN * scale, scale, scale);
-  drawMinimap(leftN, topN, viewWn, viewHn);
+  if (decorationsVisible) {
+    drawAf(dx - leftN * scale, dy - topN * scale, scale, scale);
+    drawMinimap(leftN, topN, viewWn, viewHn);
+  }
 }
 
 /** AF rectangle, given the native→screen transform. */

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import * as session from './lib/session';
 import * as viewer from './lib/viewer';
@@ -228,11 +235,16 @@ export default function App() {
   const state = useSyncExternalStore(session.subscribe, session.getState);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [showPerf, setShowPerf] = useState(false);
+  const [immersive, setImmersive] = useState(false);
+  const immersiveRef = useRef(immersive);
+  immersiveRef.current = immersive;
   // The right column holds one dock at a time — People or Trash — and an open
   // dock takes the metadata panel's place (owner decision 2026-08-29: replace,
   // not stack); `showExif` is remembered underneath and returns on close.
   const [dock, setDock] = useState<'people' | 'trash' | null>(null);
   const [showCheat, setShowCheat] = useState(false);
+  const showCheatRef = useRef(showCheat);
+  showCheatRef.current = showCheat;
   const [showRecipes, setShowRecipes] = useState(false);
   const [showTagPalette, setShowTagPalette] = useState(false);
   const [showTagFilter, setShowTagFilter] = useState(false);
@@ -254,6 +266,10 @@ export default function App() {
   const [showExif, setShowExif] = useState(localStorage.getItem('exifPanel') === '1');
   const [keysReady, setKeysReady] = useState(false);
   const [keysError, setKeysError] = useState<string | null>(null);
+
+  // Hide canvas-drawn inspection aids along with DOM chrome, without changing
+  // whether blinkies/AF/minimap are enabled underneath.
+  useLayoutEffect(() => viewer.setDecorationsVisible(!immersive), [immersive]);
 
   useEffect(() => {
     session.start();
@@ -295,9 +311,24 @@ export default function App() {
       // Form fields (recipe name input, filter dropdown) own their keys.
       const target = e.target as HTMLElement | null;
       if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+      // Help is the one modal whose Escape handling lives here. Close it
+      // before changing immersion, and ignore a held key's repeat so it cannot
+      // immediately perform a second hidden action.
+      if (e.key === 'Escape' && showCheatRef.current) {
+        if (e.repeat) return;
+        e.preventDefault();
+        setShowCheat(false);
+        return;
+      }
       // Open pickers/palettes own every key (incl. Escape) while mounted.
       if (overlayOpenRef.current) return;
       if (e.key === 'Escape') {
+        if (e.repeat) return;
+        if (immersiveRef.current) {
+          e.preventDefault();
+          setImmersive(false);
+          return;
+        }
         setShowCheat(false);
         setDock(null);
         return;
@@ -361,6 +392,11 @@ export default function App() {
           break;
         case 'filmstrip':
           toggleStrip();
+          break;
+        case 'immersion':
+          if (immersiveRef.current || session.getState().photos.length > 0) {
+            setImmersive((v) => !v);
+          }
           break;
         case 'exif_panel':
           if (dockRef.current !== null) {
@@ -562,7 +598,7 @@ export default function App() {
   const unstarred = state.all.length - starred;
 
   return (
-    <div className="app">
+    <div className={`app${immersive ? ' immersive' : ''}`} data-immersive={immersive}>
       {showStrip && state.photos.length > 0 && (
         <Filmstrip photos={state.photos} cursor={state.cursor} />
       )}
@@ -735,6 +771,15 @@ export default function App() {
           </div>
         )}
         {state.notice && <div className="notice">{state.notice}</div>}
+        {immersive && state.xmpFailed > 0 && (
+          <button
+            className="immersion-safety hud-warn"
+            title={state.xmpLastError ?? 'metadata write failed'}
+            onClick={() => void session.retryXmpWrites()}
+          >
+            ⚠ {state.xmpFailed} metadata {state.xmpFailed === 1 ? 'write' : 'writes'} failed · retry
+          </button>
+        )}
 
         {photo && state.histMode !== 'off' && (
           <HistogramPanel photoId={photo.id} mode={state.histMode} />

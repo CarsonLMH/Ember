@@ -38,6 +38,10 @@ A fast, reliable macOS photo-culling app for one user, built to replace a commer
   centered on the current photo; thumbnails show star/trash badges and current
   position. **Left/right arrows are always previous/next** regardless of strip
   orientation. No grid view.
+- **Immersion**: `Shift+T` temporarily hides every piece of chrome and canvas
+  inspection decoration for a picture-only view; `Shift+T` or `Esc` restores
+  the exact previous layout. Durability/error notices remain visible. Bare
+  `Tab` remains native keyboard focus traversal.
 - **HUD**: filename, position (n/m), stars, pair badge, session stats. Dev builds add a timing overlay (flip latency, cache hits).
 
 ## 5. Film recipes
@@ -52,7 +56,7 @@ A fast, reliable macOS photo-culling app for one user, built to replace a commer
 `←/→` prev/next · `1–5` stars · `0` clear · `X`/`Del` trash ·
 `Shift+1–5` exact-star filter · `Ctrl+Shift+1–5` N-or-more filter · `Z` 100% ·
 `F` AF-point 100% · `A` AF overlay · `H` histogram · `B` blinkies · `I` EXIF ·
-`T` filmstrip · `V` auto-advance · `U` cycle filter · `S` sort · `R` refresh ·
+`T` filmstrip · `Shift+T` immersion · `V` auto-advance · `U` cycle filter · `S` sort · `R` refresh ·
 `Cmd+Z/Shift+Z` undo/redo · `?` cheat sheet.
 Remapping via a human-editable config file (change a line, relaunch); `?` overlay always reflects actual binds. In-app editor is post-v1.
 

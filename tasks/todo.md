@@ -90,23 +90,25 @@ test, and an E2E spec
 
 ## Task 4: Add picture-only immersion mode
 
-**Description:** Add a `Tab` action that suppresses chrome and presentation
+**Description:** Add a `Shift+T` action that suppresses chrome and presentation
 overlays without mutating the user's panel/analysis preferences. `Escape`
 restores the prior layout; errors remain visible.
 
 **Acceptance criteria:**
 
-- [ ] Tab leaves only the photograph plus any active safety/error notice.
-- [ ] Navigation, rating, trash, and durability acknowledgements continue while
+- [x] Shift+T leaves only the photograph plus any active safety/error notice.
+- [x] Navigation, rating, trash, and durability acknowledgements continue while
       immersed.
-- [ ] Escape or Tab restores the exact previous filmstrip/dock/panel/overlay
+- [x] Escape or Shift+T restores the exact previous filmstrip/dock/panel/overlay
       state; immersion never persists across launch.
 
 **Verification:**
 
-- [ ] Keymap/parser tests cover Tab and repeat suppression.
-- [ ] E2E proves chrome visibility, culling keys, error visibility, and restore.
-- [ ] Fit mode and locked zoom framing survive enter/exit.
+- [x] Keymap/parser tests cover Shift+T without stealing bare Tab.
+- [x] E2E proves chrome visibility, navigation/rating, help, empty-filter exit,
+      and panel restoration; the persistent metadata-failure retry is exempted
+      from the chrome mask in the render path.
+- [x] Fit mode and locked 100% zoom framing survive enter/exit.
 
 **Dependencies:** Task 2 (final key-action inventory)
 

@@ -23,6 +23,7 @@ describe('actionFor', () => {
       { action: 'open_folder', keys: ['Cmd+o'], label: 'Open folder' },
       { action: 'filter_star1', keys: ['Shift+1'], label: 'Filter ★' },
       { action: 'filter_min3', keys: ['Ctrl+Shift+3'], label: 'Filter ★★★ or more' },
+      { action: 'immersion', keys: ['Shift+t'], label: 'Picture-only mode' },
       { action: 'cheat_sheet', keys: ['?'], label: 'Cheat sheet' },
       { action: 'perf_hud', keys: ['`'], label: 'Perf HUD' },
     ]);
@@ -58,6 +59,11 @@ describe('actionFor', () => {
   it('matches symbol bindings where Shift is implicit', () => {
     expect(actionFor(ev({ key: '?', code: 'Slash', shiftKey: true }))).toBe('cheat_sheet');
     expect(actionFor(ev({ key: '`', code: 'Backquote' }))).toBe('perf_hud');
+  });
+
+  it('matches picture-only mode without stealing native Tab traversal', () => {
+    expect(actionFor(ev({ key: 'T', code: 'KeyT', shiftKey: true }))).toBe('immersion');
+    expect(actionFor(ev({ key: 'Tab', code: 'Tab' }))).toBeNull();
   });
 
   it('returns null for unbound keys', () => {

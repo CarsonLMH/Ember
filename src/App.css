@@ -40,6 +40,28 @@ body,
   display: flex;
 }
 
+/* Picture-only immersion keeps components mounted so their exact panel state
+   returns, while display:none lets the canvas claim the whole content area. */
+.app.immersive .filmstrip,
+.app.immersive .hud,
+.app.immersive .hud-right,
+.app.immersive .face-layer,
+.app.immersive .hist-panel,
+.app.immersive > .dock,
+.app.immersive > .exif-panel,
+.app.immersive > .perf-hud {
+  display: none;
+}
+
+.immersion-safety {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 10;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
 .viewer-wrap {
   position: relative;
   flex: 1;

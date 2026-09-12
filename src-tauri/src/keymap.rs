@@ -68,6 +68,7 @@ const DEFAULTS: &[(&str, &[&str], &str)] = &[
     ("blinkies", &["b"], "Toggle clipping warnings"),
     ("auto_advance", &["v"], "Toggle auto-advance"),
     ("filmstrip", &["t"], "Toggle filmstrip"),
+    ("immersion", &["Shift+t"], "Toggle picture-only mode"),
     ("refresh", &["r"], "Rescan folder"),
     ("cheat_sheet", &["?"], "Show this cheat sheet"),
     ("perf_hud", &["`"], "Toggle performance HUD"),
@@ -197,6 +198,12 @@ mod tests {
             .find(|b| b.action == "filter_min3")
             .unwrap();
         assert_eq!(minimum.keys, vec!["Ctrl+Shift+3"]);
+        let immersion = map
+            .bindings
+            .iter()
+            .find(|b| b.action == "immersion")
+            .unwrap();
+        assert_eq!(immersion.keys, vec!["Shift+t"]);
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
