@@ -241,7 +241,7 @@ export async function runIfRequested(): Promise<void> {
     const report = await perf.flipStorm(60, 60);
     // flips >= 10 guards against a vacuous pass: a filtered view shorter than
     // the storm stops advancing at its end and records no samples.
-    const ok =
+    const behaviorOk =
       before > 0 &&
       bogus.length === 0 &&
       after >= before &&
@@ -252,14 +252,17 @@ export async function runIfRequested(): Promise<void> {
     // "HarnessPerson" once showed up in their face menus. delete_person is
     // unconditional — undo_naming deliberately skips rows a later edit (or a
     // concurrent re-detect) touched, so it cannot promise a clean exit.
-    const undone = await deletePerson(personId).catch(() => -1);
+    const cleanedUp = await deletePerson(personId).catch(() => null);
     await session.setPersonFilter(null);
+    const cleanupOk = cleanedUp !== null;
+    const ok = behaviorOk && cleanupOk;
     frontendLog(
       'info',
       `peopletest done: ${ok ? 'PASS' : 'FAIL'} named=${target.faceIds.length} ` +
         `visible=${before}→${after}/${s.all.length} bogus=${bogus.length} ` +
         `scanningWhenFiltered=${scanning} p99=${report.p99.toFixed(1)} ` +
-        `misses=${report.missServes}/${report.flips} waited=${waitedMs}ms cleanedUp=${undone}`,
+        `misses=${report.missServes}/${report.flips} waited=${waitedMs}ms ` +
+        `cleanedUp=${cleanedUp ?? 'FAIL'} cleanupOk=${cleanupOk}`,
     );
     await sleep(300);
     await quitApp();
@@ -300,10 +303,13 @@ export async function runIfRequested(): Promise<void> {
     // with misses=0/0 because the keyboard path was dead while the rating
     // callback (which calls session.rate directly) still worked. The gate
     // greps stormOk, so silence can never look like success.
-    const stormOk = report.flips > 0 && report.p99 <= 50 && report.missServes === 0;
+    const coldOpenOk = report.coldOpenMs !== null && report.coldOpenMs <= 1_000;
+    const stormOk =
+      report.flips > 0 && report.p99 <= 50 && report.missServes === 0 && coldOpenOk;
+    const coldOpen = report.coldOpenMs === null ? 'missing' : `${report.coldOpenMs.toFixed(0)}ms`;
     frontendLog(
       'info',
-      `storm done: p50=${report.p50.toFixed(1)} p99=${report.p99.toFixed(1)} max=${report.max.toFixed(1)} misses=${report.missServes}/${report.flips} coldOpen=${report.coldOpenMs?.toFixed(0)}ms${ack}${spikeTag} keys=${keys.currentBindings().length} stormOk=${stormOk}`,
+      `storm done: p50=${report.p50.toFixed(1)} p99=${report.p99.toFixed(1)} max=${report.max.toFixed(1)} misses=${report.missServes}/${report.flips} coldOpen=${coldOpen} coldOpenOk=${coldOpenOk}${ack}${spikeTag} keys=${keys.currentBindings().length} stormOk=${stormOk}`,
     );
     await sleep(500);
     await quitApp();

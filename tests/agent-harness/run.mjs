@@ -28,6 +28,22 @@ function compact(value) {
   return value.replaceAll(/\s+/g, ' ');
 }
 
+function phasePattern(phase) {
+  const prefix = `run_phase ${phase} '`;
+  const line = gateScript
+    .split('\n')
+    .map((candidate) => candidate.trimStart())
+    .find((candidate) => candidate.startsWith(prefix));
+  if (!line) return null;
+  const end = line.indexOf("'", prefix.length);
+  return end === -1 ? null : line.slice(prefix.length, end);
+}
+
+function matchesEre(pattern, line) {
+  if (!pattern) return false;
+  return spawnSync('grep', ['-qE', pattern], { input: `${line}\n` }).status === 0;
+}
+
 const claude = read('CLAUDE.md');
 const codexConfig = read('.codex/config.toml');
 const designAudit = read('.claude/skills/design-audit/SKILL.md');
@@ -38,6 +54,7 @@ const claudeMcp = JSON.parse(read('.mcp.json'));
 const packageJson = JSON.parse(read('package.json'));
 const gateConfig = JSON.parse(read('src-tauri/tauri.gate.conf.json'));
 const gateScript = read('scripts/gate.sh');
+const devHarness = compact(read('src/lib/devharness.ts'));
 const e2eConfig = compact(read('e2e/wdio.conf.ts'));
 const readmeFixtures = read('scripts/readme-fixtures.mjs');
 const activePublicExamples = [
@@ -115,6 +132,48 @@ check(
 check(
   gateScript.includes('src-tauri/tauri.gate.conf.json'),
   'real-photo gate script uses the strict off-screen configuration',
+);
+check(
+  devHarness.includes('const cleanupOk = cleanedUp !== null;') &&
+    devHarness.includes('const ok = behaviorOk && cleanupOk;') &&
+    devHarness.includes('cleanupOk=${cleanupOk}') &&
+    matchesEre(
+      phasePattern('peopletest'),
+      'peopletest done: PASS named=3 cleanedUp=3 cleanupOk=true',
+    ) &&
+    !matchesEre(
+      phasePattern('peopletest'),
+      'peopletest done: PASS named=3 cleanedUp=FAIL cleanupOk=false',
+    ),
+  'people gate cannot pass when HarnessPerson cleanup fails',
+);
+check(
+  devHarness.includes(
+    'const coldOpenOk = report.coldOpenMs !== null && report.coldOpenMs <= 1_000;',
+  ) &&
+    devHarness.includes('report.missServes === 0 && coldOpenOk;') &&
+    devHarness.includes('coldOpenOk=${coldOpenOk}') &&
+    matchesEre(
+      phasePattern('storm'),
+      'storm done: p99=49.9 coldOpen=1000ms coldOpenOk=true stormOk=true',
+    ) &&
+    !matchesEre(
+      phasePattern('storm'),
+      'storm done: p99=49.9 coldOpen=1001ms coldOpenOk=false stormOk=false',
+    ) &&
+    !matchesEre(
+      phasePattern('storm'),
+      'storm done: p99=49.9 coldOpen=missing coldOpenOk=false stormOk=false',
+    ) &&
+    matchesEre(
+      phasePattern('storm-faces'),
+      'storm done: p99=49.9 coldOpen=1000ms coldOpenOk=true facesSpike=ACTIVE stormOk=true',
+    ) &&
+    !matchesEre(
+      phasePattern('storm-faces'),
+      'storm done: p99=49.9 coldOpen=1001ms coldOpenOk=false facesSpike=ACTIVE stormOk=false',
+    ),
+  'real-photo storm gates enforce a present cold open at or below 1000ms',
 );
 check(
   packageJson.scripts?.['docs:screenshot']?.includes('EMBER_E2E_README=1') &&
