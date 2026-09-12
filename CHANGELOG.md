@@ -25,6 +25,8 @@ when in doubt, ask a session to rebuild.
 - Dev-only: MCP bridge build (`npm run tauri:mcp`) and a `/design-audit`
   skill that drives it — screenshots and DOM measurements of the live app for
   design reviews. Never in the shipped build.
+- Dev-only: Codex now shares the live Tauri and Storybook inspection setup,
+  with a harness check that keeps Claude and Codex configuration aligned.
 - Fix: `F` exits zoom from any zoomed state, not just AF-point zoom.
 - Fix: a tags-only re-edit at the same star rating can no longer have its
   metadata write silently dropped by an older queued write completing late.

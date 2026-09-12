@@ -44,6 +44,21 @@ macOS photo-culling app (Tauri 2 + Rust + React/TS). **Read SPEC.md first** — 
 
 `brew install exiftool`; Rust via rustup (stable); Node ≥22.
 
+## Agent harness
+
+- `AGENTS.md` is the canonical shared project guidance. `CLAUDE.md` imports it
+  and contains only Claude Code-specific instructions.
+- Reusable workflows stay canonical under `.claude/skills/`; expose them to
+  Codex through a thin entry point or an individual symlink under
+  `.agents/skills/`. Do not copy workflow bodies between harnesses.
+- `.mcp.json` is the Claude Code MCP adapter and `.codex/config.toml` is the
+  Codex adapter. Keep their server inventory aligned while preserving each
+  tool's native configuration format. Both live UI servers are optional so an
+  ordinary coding session still starts when the dev app or Storybook is off.
+- Run `npm run test:harness` after changing agent guidance, skills, or MCP
+  configuration. Start a fresh Claude or Codex session to verify discovery;
+  both load project guidance and tools at session startup.
+
 ## Iron rules
 
 - **Never modify a RAF file.** RAF metadata goes to a `.xmp` sidecar.
