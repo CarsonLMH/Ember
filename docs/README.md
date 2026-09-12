@@ -15,13 +15,17 @@ today.
 | [Privacy and local data](PRIVACY.md) | **Current contract** | Stored data, local processing, deletion semantics, and threat boundaries |
 | [Testing](TESTING.md) | **Current contract** | CI, unit tests, hidden native E2E, visible checks, and real-photo gates |
 | [Benchmarks](BENCHMARKS.md) | **Measured evidence** | Metric definitions, current reference results, and a reproduction protocol |
+| [Bundled models](MODELS.md) | **Current provenance** | Model hashes, licences, preprocessing compatibility, and known evidence gaps |
+| [Third-party notices](../THIRD_PARTY_NOTICES.md) | **Current provenance** | Model, runtime, and public-fixture attribution plus release-packaging caveats |
 | [Metadata contract](METADATA.md) | **Current contract** | XMP/xattr fields, adoption precedence, and file-safety guarantees |
 | [Face-system deviations](FACES_DEVIATIONS.md) | **Accepted decisions** | Deliberate differences between the original face plan and the accepted product |
 | [Rename record](RENAME.md) | **Accepted migration record** | The completed ApolloTwo-to-Ember data migration and its deliberate legacy identifiers |
 
 The bundled face models and their licence texts live in
-[`src-tauri/models/`](../src-tauri/models/). The public screenshot and its
-privacy-safe source are documented in [assets](assets/README.md).
+[`src-tauri/models/`](../src-tauri/models/). Contribution and security policy
+live in [`CONTRIBUTING.md`](../CONTRIBUTING.md) and
+[`SECURITY.md`](../SECURITY.md). The public screenshot and its privacy-safe
+source are documented in [assets](assets/README.md).
 
 ## How to read the historical material
 

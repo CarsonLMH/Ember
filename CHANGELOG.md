@@ -8,6 +8,10 @@ when in doubt, ask a session to rebuild.
 
 ## Unreleased
 
+- Repository: rebuilt the public README around an honest source-build path,
+  privacy-safe product screenshot, reproducible claims, and contributor entry
+  points; added community, security, architecture, privacy, testing, benchmark,
+  and model-provenance documentation.
 - Fix: when trashing a JPEG+RAF pair fails after the JPEG moved, Ember now
   reports a failed rollback honestly—with both errors and the two recovery
   paths—instead of claiming the JPEG was restored.
