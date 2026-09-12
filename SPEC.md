@@ -33,7 +33,11 @@ A fast, reliable macOS photo-culling app for one user, built to replace a commer
 - **Histogram**: `H` cycles off → luminance → RGB overlay; small corner panel; state persists.
 - **Blinkies**: `B` toggles; highlights = any channel ≥250, shadows = all channels ≤5; thresholds tunable in settings.
 - **EXIF panel**: `I` slides a docked right sidebar; image reflows (never overlapped). Grouped sections: Exposure, Lens, Film/Recipe, Camera, File.
-- **Filmstrip**: vertical strip docked on one side, visible by default (portrait shots make it nearly free), `T` hides it for edge-to-edge. Thumbnails show star/trash badges and current position. **Left/right arrows are always previous/next** regardless of strip orientation. No grid view.
+- **Filmstrip**: vertical strip docked on one side, visible by default (portrait
+  shots make it nearly free), `T` hides it for edge-to-edge. It opens already
+  centered on the current photo; thumbnails show star/trash badges and current
+  position. **Left/right arrows are always previous/next** regardless of strip
+  orientation. No grid view.
 - **HUD**: filename, position (n/m), stars, pair badge, session stats. Dev builds add a timing overlay (flip latency, cache hits).
 
 ## 5. Film recipes

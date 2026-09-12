@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import * as session from '../lib/session';
 import { thumbUrl } from '../lib/ipc';
 import type { Photo } from '../lib/types';
+import {
+  FILMSTRIP_ROW,
+  filmstripWindow,
+  scrollTopForCursor,
+} from './filmstripLayout';
 
-const ROW = 78;
-const OVERSCAN = 8;
 const RETRY_MS = 1200;
 const MAX_RETRIES = 40; // covers a full preview sweep of a large folder
 
@@ -33,7 +36,6 @@ function StripThumb({ id }: { id: string }) {
       className="strip-thumb"
       style={loaded ? undefined : { opacity: 0 }}
       src={`${thumbUrl(id)}?r=${attempt}`}
-      loading="lazy"
       alt=""
       onLoad={() => setLoaded(true)}
       onError={() => {
@@ -56,10 +58,14 @@ export default function Filmstrip({
   cursor: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [scrollTop, setScrollTop] = useState(0);
+  // The saved cursor must exist in the very first virtual window. Starting at
+  // zero mounts the wrong end of a resumed folder until effects run.
+  const [scrollTop, setScrollTop] = useState(() =>
+    scrollTopForCursor(cursor, 0, photos.length),
+  );
   const [height, setHeight] = useState(0);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     const ro = new ResizeObserver(() => setHeight(el.clientHeight));
@@ -69,15 +75,15 @@ export default function Filmstrip({
   }, []);
 
   // Keep the current photo centered as the cursor moves.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current;
-    if (!el || !height) return;
-    const target = cursor * ROW - height / 2 + ROW / 2;
-    el.scrollTo({ top: Math.max(0, target) });
+    if (!el) return;
+    const target = scrollTopForCursor(cursor, el.clientHeight, photos.length);
+    el.scrollTop = target;
+    setScrollTop(target);
   }, [cursor, height, photos.length]);
 
-  const start = Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN);
-  const end = Math.min(photos.length, Math.ceil((scrollTop + height) / ROW) + OVERSCAN);
+  const { start, end } = filmstripWindow(photos.length, scrollTop, height);
   // Focus-check dots appear only past the user's own settings.toml threshold.
   const { focusScores, focusSoftThreshold } = session.getState();
   const rows = [];
@@ -91,7 +97,7 @@ export default function Filmstrip({
       <div
         key={p.id}
         className={`strip-row${i === cursor ? ' strip-current' : ''}${p.missing ? ' strip-missing' : ''}`}
-        style={{ top: i * ROW }}
+        style={{ top: i * FILMSTRIP_ROW }}
         onClick={() => session.jumpTo(i)}
       >
         <StripThumb id={p.id} />
@@ -118,7 +124,7 @@ export default function Filmstrip({
       tabIndex={0}
       onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
     >
-      <div className="strip-inner" style={{ height: photos.length * ROW }}>
+      <div className="strip-inner" style={{ height: photos.length * FILMSTRIP_ROW }}>
         {rows}
       </div>
     </div>

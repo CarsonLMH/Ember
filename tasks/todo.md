@@ -70,15 +70,15 @@ mounted thumbnails.
 
 **Acceptance criteria:**
 
-- [ ] The first virtual window contains a saved cursor near either end.
-- [ ] Reopening a warm folder shows the current row in the viewport without a
+- [x] The first virtual window contains a saved cursor near either end.
+- [x] Reopening a warm folder shows the current row in the viewport without a
       visible row-zero flash or delayed lazy-load.
-- [ ] No backend work is added to folder open or the flip path.
+- [x] No backend work is added to folder open or the flip path.
 
 **Verification:**
 
-- [ ] Pure virtual-window tests cover empty, first, middle, and final cursors.
-- [ ] Runtime E2E checks current-row visibility and nonzero thumbnail width.
+- [x] Pure virtual-window tests cover empty, first, middle, and final cursors.
+- [x] Runtime E2E checks current-row visibility and nonzero thumbnail width.
 - [ ] Warm/cold current-thumbnail readiness is measured separately.
 
 **Dependencies:** None

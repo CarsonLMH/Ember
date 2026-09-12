@@ -1,4 +1,4 @@
-import { expect } from '@wdio/globals';
+import { browser, expect, $ } from '@wdio/globals';
 import {
   waitForFolderOpen,
   hudPos,
@@ -25,5 +25,27 @@ describe('smoke: launch and folder open', () => {
     expect(await hudName()).toBe(`IMG_${String(FIXTURE_COUNT).padStart(4, '0')}`);
     await goHome();
     expect(await hudName()).toBe('IMG_0001');
+  });
+
+  it('mounts the filmstrip at the current photo with its thumbnail ready', async () => {
+    await key('t');
+    await $('.filmstrip').waitForExist({ reverse: true });
+    await goEnd();
+    await key('t');
+
+    const current = $('.strip-current');
+    await current.waitForDisplayed();
+    const thumb = current.$('img.strip-thumb');
+    await browser.waitUntil(async () => Number(await thumb.getProperty('naturalWidth')) > 0, {
+      timeoutMsg: 'current filmstrip thumbnail never became ready',
+    });
+    expect(
+      await browser.execute(() => {
+        const strip = document.querySelector('.filmstrip')?.getBoundingClientRect();
+        const row = document.querySelector('.strip-current')?.getBoundingClientRect();
+        return Boolean(strip && row && row.top >= strip.top && row.bottom <= strip.bottom);
+      }),
+    ).toBe(true);
+    await goHome();
   });
 });
