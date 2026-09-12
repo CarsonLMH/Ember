@@ -8,6 +8,7 @@ import {
   appBinary,
   fixturesDir,
   rootDir,
+  readmeFixturesDir,
   stormFixturesDir,
   EMBEDDED_PORT,
   FIXTURE_COUNT,
@@ -17,7 +18,8 @@ import {
 // EMBER_E2E_PERF=1 (npm run e2e:perf) switches to the perf gate: only the
 // 05 spec, against the big storm fixture set, on a machine that must be quiet.
 const PERF = process.env.EMBER_E2E_PERF === '1';
-const VISIBLE = PERF || process.env.EMBER_E2E_VISIBLE === '1';
+const README = process.env.EMBER_E2E_README === '1';
+const VISIBLE = !README && (PERF || process.env.EMBER_E2E_VISIBLE === '1');
 const UPDATE_VISUAL_BASELINES = process.env.EMBER_UPDATE_VISUAL_BASELINES === '1';
 
 // visual-service v9 checks argv inside each worker, while WDIO does not pass
@@ -29,7 +31,11 @@ if (UPDATE_VISUAL_BASELINES && !process.argv.includes('--update-visual-baseline'
 
 // The spawned app inherits this process's environment; EMBER_OPEN makes every
 // session (including durability relaunches) open the fixture folder on boot.
-process.env.EMBER_OPEN = PERF ? stormFixturesDir : fixturesDir;
+process.env.EMBER_OPEN = PERF
+  ? stormFixturesDir
+  : README
+    ? readmeFixturesDir
+    : fixturesDir;
 // Functional and accessibility runs must never activate or flash a native
 // window over the user's desktop. Visual and glass-time perf checks are the
 // explicit exceptions and have separate commands/warnings.
@@ -44,15 +50,17 @@ const sandboxDirs = [
 
 export const config: WebdriverIO.Config = {
   runner: 'local',
-  specs: PERF
-    ? ['./specs/05-perf-signal.e2e.ts']
-    : VISIBLE
-      ? [
-          './specs/0[1-4]-*.e2e.ts',
-          './specs/06-accessibility.e2e.ts',
-          './specs/07-visual.e2e.ts',
-        ]
-      : ['./specs/0[1-4]-*.e2e.ts', './specs/06-accessibility.e2e.ts'],
+  specs: README
+    ? ['./specs/08-readme-screenshot.e2e.ts']
+    : PERF
+      ? ['./specs/05-perf-signal.e2e.ts']
+      : VISIBLE
+        ? [
+            './specs/0[1-4]-*.e2e.ts',
+            './specs/06-accessibility.e2e.ts',
+            './specs/07-visual.e2e.ts',
+          ]
+        : ['./specs/0[1-4]-*.e2e.ts', './specs/06-accessibility.e2e.ts'],
   maxInstances: 1,
   capabilities: [
     {
@@ -128,7 +136,10 @@ export const config: WebdriverIO.Config = {
     }
     for (const dir of sandboxDirs) rmSync(dir, { recursive: true, force: true });
     const gen = path.join(rootDir, 'scripts', 'e2e-fixtures.mjs');
-    if (PERF) {
+    if (README) {
+      const readmeGen = path.join(rootDir, 'scripts', 'readme-fixtures.mjs');
+      execFileSync('node', [readmeGen], { stdio: 'inherit' });
+    } else if (PERF) {
       // Storm fixtures are never rated → XMP-clean → safe to reuse across runs.
       execFileSync('node', [gen, stormFixturesDir, String(STORM_FIXTURE_COUNT), '--if-missing'], {
         stdio: 'inherit',

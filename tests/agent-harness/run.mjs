@@ -35,8 +35,11 @@ const designAuditSurfaces = read('.claude/skills/design-audit/surfaces.md');
 const compactDesignAudit = compact(designAudit);
 const compactDesignAuditSurfaces = compact(designAuditSurfaces);
 const claudeMcp = JSON.parse(read('.mcp.json'));
+const packageJson = JSON.parse(read('package.json'));
 const gateConfig = JSON.parse(read('src-tauri/tauri.gate.conf.json'));
 const gateScript = read('scripts/gate.sh');
+const e2eConfig = compact(read('e2e/wdio.conf.ts'));
+const readmeFixtures = read('scripts/readme-fixtures.mjs');
 const activePublicExamples = [
   '.claude/skills/design-audit/SKILL.md',
   '.claude/skills/design-audit/surfaces.md',
@@ -112,6 +115,15 @@ check(
 check(
   gateScript.includes('src-tauri/tauri.gate.conf.json'),
   'real-photo gate script uses the strict off-screen configuration',
+);
+check(
+  packageJson.scripts?.['docs:screenshot']?.includes('EMBER_E2E_README=1') &&
+    e2eConfig.includes(
+      "const VISIBLE = !README && (PERF || process.env.EMBER_E2E_VISIBLE === '1');",
+    ) &&
+    readmeFixtures.includes("'e2e', 'fixtures', 'readme'") &&
+    !readmeFixtures.includes('process.argv'),
+  'README screenshots use a fixed private-data-free fixture and can never reveal the test window',
 );
 
 const claudeServers = Object.keys(claudeMcp.mcpServers ?? {})

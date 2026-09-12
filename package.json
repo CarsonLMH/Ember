@@ -22,7 +22,8 @@
     "e2e": "wdio run e2e/wdio.conf.ts",
     "e2e:visual": "EMBER_E2E_VISIBLE=1 wdio run e2e/wdio.conf.ts --spec e2e/specs/07-visual.e2e.ts",
     "e2e:visual:update": "EMBER_UPDATE_VISUAL_BASELINES=1 npm run e2e:visual",
-    "e2e:perf": "EMBER_E2E_PERF=1 wdio run e2e/wdio.conf.ts"
+    "e2e:perf": "EMBER_E2E_PERF=1 wdio run e2e/wdio.conf.ts",
+    "docs:screenshot": "EMBER_E2E_README=1 wdio run e2e/wdio.conf.ts"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

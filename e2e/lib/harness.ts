@@ -9,6 +9,7 @@ export const appBinary = path.join(rootDir, 'src-tauri', 'target', 'debug', 'emb
 export const fixturesDir =
   process.env.EMBER_E2E_FIXTURES ?? path.join(e2eDir, 'fixtures', 'basic');
 export const FIXTURE_COUNT = 12;
+export const readmeFixturesDir = path.join(e2eDir, 'fixtures', 'readme');
 
 // Perf mode uses a big, never-rated (so XMP-clean, cacheable) fixture set:
 // p99 over ~100 flips is just the worst sample; 250 flips over 320 photos is
