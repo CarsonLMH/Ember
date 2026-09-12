@@ -508,11 +508,26 @@ fn get_tag_vocab(app: tauri::AppHandle) -> Result<Vec<String>, String> {
 }
 
 fn restore_from_payload(p: &TrashPayload) -> Result<(), String> {
+    restore_from_payload_with(p, trash::restore_file, trash::move_file)
+}
+
+fn restore_from_payload_with<R, B>(
+    p: &TrashPayload,
+    mut restore_one: R,
+    mut rollback_one: B,
+) -> Result<(), String>
+where
+    R: FnMut(&std::path::Path, &std::path::Path) -> Result<(), String>,
+    B: FnMut(&std::path::Path, &std::path::Path) -> Result<(), String>,
+{
     // (trash copy, original) → Ok(true) if this call moved the file.
-    fn restore_half(t: &str, orig: &str) -> Result<bool, String> {
+    fn restore_half<R>(t: &str, orig: &str, restore_one: &mut R) -> Result<bool, String>
+    where
+        R: FnMut(&std::path::Path, &std::path::Path) -> Result<(), String>,
+    {
         let (t, orig) = (std::path::Path::new(t), std::path::Path::new(orig));
         if t.exists() {
-            trash::restore_file(t, orig)?;
+            restore_one(t, orig)?;
             return Ok(true);
         }
         if orig.exists() {
@@ -525,21 +540,74 @@ fn restore_from_payload(p: &TrashPayload) -> Result<(), String> {
     }
 
     let jpeg_moved_here = match (&p.tjpeg, &p.jpeg) {
-        (Some(t), Some(orig)) => restore_half(t, orig)?,
+        (Some(t), Some(orig)) => restore_half(t, orig, &mut restore_one)?,
         _ => false,
     };
     if let (Some(t), Some(orig)) = (&p.traf, &p.raf) {
-        if let Err(e) = restore_half(t, orig) {
+        if let Err(e) = restore_half(t, orig, &mut restore_one) {
             // Roll back only a JPEG we moved, to keep the pair consistent.
             if jpeg_moved_here {
-                if let (Some(t), Some(orig)) = (&p.tjpeg, &p.jpeg) {
-                    let _ = trash::move_file(std::path::Path::new(orig), std::path::Path::new(t));
+                if let (Some(jpeg_trash), Some(jpeg_orig)) = (&p.tjpeg, &p.jpeg) {
+                    return match rollback_one(
+                        std::path::Path::new(jpeg_orig),
+                        std::path::Path::new(jpeg_trash),
+                    ) {
+                        Ok(()) => Err(format!("RAF restore failed; JPEG returned to Trash: {e}")),
+                        Err(rollback) => Err(format!(
+                            "RAF restore failed: {e}; JPEG rollback failed: {rollback}. \
+                             The pair may now be split. Verify the JPEG at {} or {} and the RAF \
+                             at {} or {}, then use Finder to restore or re-trash the stray half \
+                             before retrying",
+                            jpeg_orig, jpeg_trash, orig, t
+                        )),
+                    };
                 }
             }
             return Err(e);
         }
     }
     Ok(())
+}
+
+/// Complete an undo/redo step whose filesystem consequence is a restore.
+/// A failed restore leaves both the photo snapshot and the action's history
+/// lane untouched, so the UI cannot claim success and the user can retry.
+fn apply_restore_action(
+    store: &Store,
+    act: &store::ActionRow,
+    payload: &TrashPayload,
+    undone: bool,
+) -> Result<Delta, String> {
+    if let Err(error) = restore_from_payload(payload) {
+        return Ok(Delta {
+            photo_id: act.photo_id.clone(),
+            kind: act.kind.clone(),
+            rating: None,
+            tags: None,
+            trashed: None,
+            error: Some(error),
+        });
+    }
+
+    store
+        .finish_flip(
+            act.seq,
+            undone,
+            &act.photo_id,
+            None,
+            None,
+            Some((payload, false)),
+            None,
+        )
+        .map_err(|e| format!("CRITICAL: files restored but journal update failed: {e}"))?;
+    Ok(Delta {
+        photo_id: act.photo_id.clone(),
+        kind: act.kind.clone(),
+        rating: None,
+        tags: None,
+        trashed: Some(false),
+        error: None,
+    })
 }
 
 /// A photo marked trashed whose files are all back on disk (Finder "Put
@@ -643,27 +711,7 @@ fn undo(state: tauri::State<'_, AppState>, folder_id: i64) -> Result<Option<Delt
         }
         "trash" => {
             let p: TrashPayload = serde_json::from_str(&act.payload).map_err(|e| e.to_string())?;
-            let err = restore_from_payload(&p).err();
-            state
-                .store
-                .finish_flip(
-                    act.seq,
-                    true,
-                    &act.photo_id,
-                    None,
-                    None,
-                    Some((&p, false)),
-                    None,
-                )
-                .map_err(|e| e.to_string())?;
-            Delta {
-                photo_id: act.photo_id,
-                kind: "trash".into(),
-                rating: None,
-                tags: None,
-                trashed: Some(false),
-                error: err,
-            }
+            apply_restore_action(&state.store, &act, &p, true)?
         }
         "restore" => {
             let p: TrashPayload = serde_json::from_str(&act.payload).map_err(|e| e.to_string())?;
@@ -784,27 +832,7 @@ fn redo(state: tauri::State<'_, AppState>, folder_id: i64) -> Result<Option<Delt
         }
         "restore" => {
             let p: TrashPayload = serde_json::from_str(&act.payload).map_err(|e| e.to_string())?;
-            let err = restore_from_payload(&p).err();
-            state
-                .store
-                .finish_flip(
-                    act.seq,
-                    false,
-                    &act.photo_id,
-                    None,
-                    None,
-                    Some((&p, false)),
-                    None,
-                )
-                .map_err(|e| e.to_string())?;
-            Delta {
-                photo_id: act.photo_id,
-                kind: "restore".into(),
-                rating: None,
-                tags: None,
-                trashed: Some(false),
-                error: err,
-            }
+            apply_restore_action(&state.store, &act, &p, false)?
         }
         other => return Err(format!("unknown action kind: {other}")),
     };
@@ -1610,6 +1638,132 @@ mod tests {
         // A half missing from BOTH places is a loud error.
         std::fs::remove_file(&raf).unwrap();
         assert!(restore_from_payload(&payload).is_err());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn restore_reports_when_raf_restore_and_jpeg_rollback_both_fail() {
+        let base = std::env::temp_dir().join(format!("ember-rst-rollback-{}", std::process::id()));
+        let (dir, tr) = (base.join("photos"), base.join("trash"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&tr).unwrap();
+        let (jpeg, raf) = (dir.join("A.JPG"), dir.join("A.RAF"));
+        let (tjpeg, traf) = (tr.join("A.JPG"), tr.join("A.RAF"));
+        std::fs::write(&tjpeg, b"j").unwrap();
+        std::fs::write(&traf, b"r").unwrap();
+        let payload = TrashPayload {
+            jpeg: pstr(&jpeg),
+            raf: pstr(&raf),
+            tjpeg: pstr(&tjpeg),
+            traf: pstr(&traf),
+        };
+
+        let error = restore_from_payload_with(
+            &payload,
+            |in_trash, original| {
+                if in_trash == tjpeg {
+                    trash::restore_file(in_trash, original)
+                } else {
+                    Err("injected RAF restore failure".into())
+                }
+            },
+            |_original, _in_trash| Err("injected JPEG rollback failure".into()),
+        )
+        .expect_err("the split pair must be reported");
+
+        assert!(error.contains("injected RAF restore failure"));
+        assert!(error.contains("injected JPEG rollback failure"));
+        assert!(error.contains(&jpeg.to_string_lossy().into_owned()));
+        assert!(error.contains(&tjpeg.to_string_lossy().into_owned()));
+        assert!(
+            !error.contains("JPEG returned to Trash"),
+            "a failed rollback must never be reported as successful: {error}"
+        );
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn failed_undo_restore_keeps_photo_and_action_trashed() {
+        let base = std::env::temp_dir().join(format!("ember-undo-rst-{}", std::process::id()));
+        let dir = base.join("photos");
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::new(&base.join("t.sqlite3")).unwrap();
+        let folder = store.open_folder(dir.to_str().unwrap()).unwrap();
+        let jpeg = dir.join("A.JPG");
+        std::fs::write(&jpeg, b"j").unwrap();
+        let entries = scanner::scan(&dir);
+        store.sync_photos(folder.folder_id, &entries).unwrap();
+        std::fs::remove_file(&jpeg).unwrap();
+        let payload = TrashPayload {
+            jpeg: pstr(&jpeg),
+            raf: None,
+            tjpeg: pstr(&base.join("missing-trash-A.JPG")),
+            traf: None,
+        };
+        store
+            .record_trash(folder.folder_id, &entries[0].id, &payload)
+            .unwrap();
+        let action = store.peek_undo(folder.folder_id).unwrap().unwrap();
+
+        let delta = apply_restore_action(&store, &action, &payload, true).unwrap();
+
+        assert!(delta.error.is_some());
+        assert_eq!(delta.trashed, None);
+        assert_eq!(store.trashed_list(folder.folder_id).unwrap().len(), 1);
+        assert_eq!(
+            store.peek_undo(folder.folder_id).unwrap().unwrap().seq,
+            action.seq,
+            "failed undo must remain available to retry"
+        );
+        assert!(store.peek_redo(folder.folder_id).unwrap().is_none());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn failed_redo_restore_keeps_photo_and_action_trashed() {
+        let base = std::env::temp_dir().join(format!("ember-redo-rst-{}", std::process::id()));
+        let dir = base.join("photos");
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::new(&base.join("t.sqlite3")).unwrap();
+        let folder = store.open_folder(dir.to_str().unwrap()).unwrap();
+        let jpeg = dir.join("A.JPG");
+        std::fs::write(&jpeg, b"j").unwrap();
+        let entries = scanner::scan(&dir);
+        store.sync_photos(folder.folder_id, &entries).unwrap();
+        std::fs::remove_file(&jpeg).unwrap();
+        let payload = TrashPayload {
+            jpeg: pstr(&jpeg),
+            raf: None,
+            tjpeg: pstr(&base.join("missing-trash-A.JPG")),
+            traf: None,
+        };
+        store
+            .record_restore(folder.folder_id, &entries[0].id, &payload)
+            .unwrap();
+        let action = store.peek_undo(folder.folder_id).unwrap().unwrap();
+        store
+            .finish_flip(
+                action.seq,
+                true,
+                &action.photo_id,
+                None,
+                None,
+                Some((&payload, true)),
+                None,
+            )
+            .unwrap();
+        let action = store.peek_redo(folder.folder_id).unwrap().unwrap();
+
+        let delta = apply_restore_action(&store, &action, &payload, false).unwrap();
+
+        assert!(delta.error.is_some());
+        assert_eq!(delta.trashed, None);
+        assert_eq!(store.trashed_list(folder.folder_id).unwrap().len(), 1);
+        assert_eq!(
+            store.peek_redo(folder.folder_id).unwrap().unwrap().seq,
+            action.seq,
+            "failed redo must remain available to retry"
+        );
         std::fs::remove_dir_all(&base).unwrap();
     }
 

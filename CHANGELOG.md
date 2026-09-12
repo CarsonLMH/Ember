@@ -15,6 +15,10 @@ when in doubt, ask a session to rebuild.
 - Fix: when trashing a JPEG+RAF pair fails after the JPEG moved, Ember now
   reports a failed rollback honestly—with both errors and the two recovery
   paths—instead of claiming the JPEG was restored.
+- Fix: when undoing trash or redoing a restore fails on disk, Ember now keeps
+  the photo and history step marked trashed so the operation stays retryable;
+  a failed JPEG rollback during paired restore reports both errors and the
+  affected paths instead of hiding the split pair.
 
 - The `?` shortcut sheet is now grouped by intent, with exact-rating and
   rating-or-more filters separated so the right chord is easy to find. It is
