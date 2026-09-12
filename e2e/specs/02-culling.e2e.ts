@@ -8,6 +8,31 @@ import {
   FIXTURE_COUNT,
 } from '../lib/harness.js';
 
+async function dispatchChord(keyName: string, code: string, ctrlKey = false): Promise<void> {
+  await browser.execute(
+    (key, keyCode, ctrl) => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key,
+          code: keyCode,
+          ctrlKey: ctrl,
+          shiftKey: true,
+          bubbles: true,
+        }),
+      );
+    },
+    keyName,
+    code,
+    ctrlKey,
+  );
+}
+
+async function hudHasChip(label: string): Promise<boolean> {
+  return browser.execute((expected) =>
+    [...document.querySelectorAll('.hud-chip')].some((el) => el.textContent === expected),
+  label);
+}
+
 describe('culling loop: rate, clear, trash, restore', () => {
   before(async () => {
     await waitForFolderOpen();
@@ -66,5 +91,47 @@ describe('culling loop: rate, clear, trash, restore', () => {
     });
     expect((await hudPos()).m).toBe(FIXTURE_COUNT);
     await $('.dock-close').click(); // close panel
+  });
+
+  it('distinguishes exact and minimum ratings and names every sort mode plainly', async () => {
+    await goHome();
+    for (const rating of [3, 4, 5]) {
+      await key(String(rating), 1, 0);
+      await browser.waitUntil(async () => (await hudStars()) === rating);
+      if (rating < 5) await key('ArrowRight');
+    }
+
+    await dispatchChord('$', 'Digit4');
+    await browser.waitUntil(async () => (await hudPos()).m === 1);
+    expect(await hudStars()).toBe(4);
+
+    await dispatchChord('$', 'Digit4', true);
+    await browser.waitUntil(async () => (await hudPos()).m === 2);
+    expect(await hudStars()).toBeGreaterThanOrEqual(4);
+
+    await dispatchChord(')', 'Digit0');
+    await browser.waitUntil(async () => (await hudPos()).m === FIXTURE_COUNT);
+
+    await key('s');
+    await browser.waitUntil(() => hudHasChip('filename'));
+    await key('s');
+    await browser.waitUntil(() => hudHasChip('rating'));
+    await goHome();
+    expect(await hudStars()).toBe(5);
+
+    await dispatchChord('S', 'KeyS');
+    await browser.waitUntil(() => hudHasChip('rating ↓'));
+    await key('s');
+    await browser.waitUntil(() => hudHasChip('date captured ↓'));
+    await dispatchChord('S', 'KeyS');
+    await browser.waitUntil(async () => !(await hudHasChip('date captured ↓')));
+
+    await goHome();
+    for (let i = 0; i < 3; i += 1) {
+      await key('0', 1, 0);
+      await browser.waitUntil(async () => (await hudStars()) === 0);
+      if (i < 2) await key('ArrowRight');
+    }
+    await goHome();
   });
 });
