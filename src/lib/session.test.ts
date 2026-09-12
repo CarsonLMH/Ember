@@ -127,6 +127,83 @@ async function goTo(id: string): Promise<void> {
   await settle();
 }
 
+describe('auto-advance preference', () => {
+  it('starts with auto-advance disabled when no preference exists', () => {
+    expect(storage.has('autoAdvance')).toBe(false);
+    expect(session.getState().autoAdvance).toBe(false);
+  });
+});
+
+describe('rating durability and movement', () => {
+  beforeEach(async () => {
+    storage.clear();
+    if (session.getState().autoAdvance) session.toggleAutoAdvance();
+    vi.mocked(ipc.setRating).mockReset();
+    vi.mocked(ipc.setRating).mockResolvedValue(undefined);
+    await session.openFolder('/photos');
+    await settle();
+  });
+
+  it('changes neither rating nor cursor before the durable acknowledgement', async () => {
+    let acknowledge!: () => void;
+    vi.mocked(ipc.setRating).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          acknowledge = resolve;
+        }),
+    );
+
+    const pending = session.rate(3, 0);
+    await settle();
+    expect(session.getState().photos[0].rating).toBe(0);
+    expect(session.getState().cursor).toBe(0);
+
+    acknowledge();
+    await pending;
+    expect(session.getState().photos[0].rating).toBe(3);
+    expect(session.getState().cursor).toBe(0);
+  });
+
+  it('keeps the verdict and cursor unchanged when the write is refused', async () => {
+    vi.mocked(ipc.setRating).mockRejectedValueOnce(new Error('disk full'));
+
+    await session.rate(4, 0);
+
+    expect(session.getState().photos[0].rating).toBe(0);
+    expect(session.getState().cursor).toBe(0);
+    expect(session.getState().notice).toContain('Rating NOT saved');
+  });
+
+  it('persists an explicit opt-in and advances only after acknowledgement', async () => {
+    session.toggleAutoAdvance();
+    expect(storage.get('autoAdvance')).toBe('1');
+
+    await session.rate(5, 0);
+
+    expect(session.getState().all.find((p) => p.id === 'a')?.rating).toBe(5);
+    expect(session.getState().cursor).toBe(1);
+    expect(session.getState().photos[1].id).toBe('b');
+  });
+
+  it('never advances when clearing a rating', async () => {
+    session.toggleAutoAdvance();
+
+    await session.rate(0, 0);
+
+    expect(session.getState().cursor).toBe(0);
+  });
+
+  it('allows an active filter to remove the rated photo without calling it auto-advance', async () => {
+    session.setFilter('unstarred');
+
+    await session.rate(3, 0);
+
+    expect(session.getState().autoAdvance).toBe(false);
+    expect(session.getState().photos.map((p) => p.id)).toEqual(['b']);
+    expect(session.getState().cursor).toBe(0);
+  });
+});
+
 describe('faces-progress handling', () => {
   beforeEach(async () => {
     facesForPhoto.mockClear();

@@ -140,7 +140,7 @@ export async function flipStorm(
     );
     // Every 10th flip also rates the current photo: measures the journal-ack
     // round trip (rating → fsync'd verdict) under the same storm load. The
-    // rating advance renders via showCurrent(null), so flip stats stay pure.
+    // rating rebuild renders via showCurrent(null), so flip stats stay pure.
     if (rateFn && i % 10 === 9) {
       const t0 = performance.now();
       await rateFn((i % 5) + 1);

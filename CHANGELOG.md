@@ -8,6 +8,8 @@ when in doubt, ask a session to rebuild.
 
 ## 1.4.0 — 2026-08-23
 
+- Ratings now stay on the current photo by default. `V` still enables and
+  remembers auto-advance when wanted.
 - People and Trash are now real right-column sidebars — opaque, full height,
   their own scroll — instead of cards floating over the metadata panel. One
   takes the column at a time (`p` / the trash button; `i` swaps back to

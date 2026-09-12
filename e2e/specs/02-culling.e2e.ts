@@ -5,7 +5,6 @@ import {
   hudStars,
   key,
   goHome,
-  rateAndAdvance,
   FIXTURE_COUNT,
 } from '../lib/harness.js';
 
@@ -16,10 +15,15 @@ describe('culling loop: rate, clear, trash, restore', () => {
   });
 
   it('rates a photo and the verdict is acked in the HUD', async () => {
-    await rateAndAdvance(3);
+    await key('3', 1, 0);
+    await browser.waitUntil(async () => (await hudStars()) === 3, {
+      timeoutMsg: 'rating never acked in the HUD',
+    });
+    expect((await hudPos()).n).toBe(1);
+    expect(await hudStars()).toBe(3);
+    await key('ArrowRight');
     expect((await hudPos()).n).toBe(2);
     await key('ArrowLeft');
-    expect(await hudStars()).toBe(3);
   });
 
   it('clears the stars it just set with 0', async () => {

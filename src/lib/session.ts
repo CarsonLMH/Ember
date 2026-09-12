@@ -111,7 +111,9 @@ let state: SessionState = {
   filter: 'all',
   sort: 'capture',
   reverse: false,
-  autoAdvance: localStorage.getItem('autoAdvance') !== '0',
+  // Rating-in-place is the safe default. Only a deliberate V opt-in persists
+  // auto-advance; missing, old, or malformed values all mean off.
+  autoAdvance: localStorage.getItem('autoAdvance') === '1',
   histMode: (['off', 'lum', 'rgb'].includes(localStorage.getItem('histMode') ?? '')
     ? localStorage.getItem('histMode')
     : 'off') as HistMode,
@@ -847,7 +849,8 @@ async function ensureMask(photo: Photo): Promise<ImageBitmap | null> {
 
 // ---------- verdicts ----------
 
-/** Rate the current photo. Journal write is awaited BEFORE auto-advance:
+/** Rate the current photo. Journal write is awaited BEFORE the UI update and
+ * optional auto-advance:
  * an acknowledged star can never be lost, even to kill -9 — and a REFUSED
  * star must be equally loud: no advance, no local state, a visible notice. */
 export async function rate(rating: number, _eventTs: number): Promise<void> {

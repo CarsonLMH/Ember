@@ -8,18 +8,18 @@ make automated harnesses move explicitly instead of relying on the preference.
 
 **Acceptance criteria:**
 
-- [ ] A fresh profile rates without changing the selected photo.
-- [ ] An explicit `V` opt-in persists and advances only after a successful
+- [x] A fresh profile rates without changing the selected photo.
+- [x] An explicit `V` opt-in persists and advances only after a successful
       durable acknowledgement.
-- [ ] Rating failures change neither verdict nor cursor; filtering a newly
+- [x] Rating failures change neither verdict nor cursor; filtering a newly
       out-of-scope photo remains honest and documented.
 
 **Verification:**
 
-- [ ] Focused session tests cover pending, successful, failed, opt-in, clear,
+- [x] Focused session tests cover pending, successful, failed, opt-in, clear,
       and filter-removal behavior.
-- [ ] Culling E2E asserts position stays fixed after rating on All.
-- [ ] Chaos/performance harnesses advance explicitly and remain preference-neutral.
+- [x] Culling E2E asserts position stays fixed after rating on All.
+- [x] Chaos/performance harnesses advance explicitly and remain preference-neutral.
 
 **Dependencies:** None
 

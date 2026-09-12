@@ -12,12 +12,15 @@ A fast, reliable macOS photo-culling app for one user, built to replace a commer
 - **Verdict model**: **stars 0–5** + **trashed**. No pick/reject flag. B-roll is implicit: unstarred and not trashed. A folder is "done" when everything is starred, consciously left unstarred, or in the Trash.
 - **X = trash immediately**: the pair (both files or nothing) goes to the **macOS system Trash** via the native API, recoverable with Put Back. If trashing one file of a pair fails, the other is restored — never a half-deleted pair.
 - **Safety nets**: multi-step **Cmd+Z undo** (restores trashed files from the Trash, reverts ratings) with redo; plus a **session trash list** panel — everything trashed, restorable per-item in one click. Undo history is journal-backed and survives restarts.
-- **Auto-advance** on rating (toggleable). Trashing inherently advances.
+- Ratings stay on the current photo by default. **Auto-advance** is an explicit,
+  persistent `V` toggle; trashing inherently advances.
 
 ## 3. The loop (primary flows)
 
 1. **Open folder** (Cmd+O or drag) → recursive scan → first image visible **≤1s**, indexing continues in background. Sort: capture time (default) / filename / rating, reverse toggle. Existing XMP ratings in files (e.g. from Capture One) are adopted as initial state.
-2. **First pass**: arrow through everything. `1–5` stars standouts (auto-advance), `X` trashes garbage, arrows skip B-roll. All navigation ≤50ms per flip.
+2. **First pass**: arrow through everything. `1–5` stars standouts in place (`V`
+   opts into auto-advance), `X` trashes garbage, arrows skip B-roll. All
+   navigation ≤50ms per flip.
 3. **Tightening passes**: filter to **Unstarred** (survivors) or **Starred** (tighten the top), repeat. Filters: All / Unstarred / Starred / exact star level / recipe / unknown-recipe — combinable (AND).
 4. **Resume**: reopening a half-culled folder restores sort, filter, and exact position. No seen-tracking.
 5. **Session stats** in HUD: total / starred / unstarred / trashed.

@@ -86,6 +86,11 @@ export async function runIfRequested(): Promise<void> {
       const rating = (i % 5) + 1;
       await session.rate(rating, performance.now());
       frontendLog('info', `acked ${photo.id} ${rating}`);
+      // Chaos is a durability harness, not a preference test. Visit successive
+      // photos explicitly when rating-in-place is active.
+      if (session.getState().photos[session.getState().cursor]?.id === photo.id) {
+        session.flip(1, performance.now());
+      }
       i += 1;
       await sleep(15);
     }
