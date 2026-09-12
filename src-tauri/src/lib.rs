@@ -1361,13 +1361,37 @@ pub fn run() {
             .bind_address("127.0.0.1")
             .build(),
     );
-    builder
+    let app = builder
         .setup(|app| {
+            // The strict hidden E2E path starts with a Prohibited macOS
+            // activation policy and no auto-created window. Switch to
+            // Accessory (still non-activating), then create the hidden webview
+            // only after the event loop is ready for WebDriver to register it.
+            #[cfg(feature = "e2e")]
+            if app.config().identifier == "com.cleung.ember.e2e"
+                && app.get_webview_window("main").is_none()
+            {
+                #[cfg(target_os = "macos")]
+                if harness_hidden() {
+                    app.handle()
+                        .set_activation_policy(tauri::ActivationPolicy::Accessory)?;
+                }
+                tauri::WebviewWindowBuilder::from_config(
+                    app.handle(),
+                    &app.config().app.windows[0],
+                )?
+                .build()?;
+            }
             // Harness runs (EMBER_HIDDEN=1) keep their window invisible so
-            // automated storms can never hijack a window the user is culling in.
-            if harness_hidden() {
-                if let Some(w) = app.get_webview_window("main") {
+            // automated checks can never hijack the user's desktop. E2E
+            // config starts hidden; explicit visual/perf runs reveal it here.
+            if let Some(w) = app.get_webview_window("main") {
+                if harness_hidden() {
                     let _ = w.hide();
+                }
+                #[cfg(feature = "e2e")]
+                if !harness_hidden() {
+                    let _ = w.show();
                 }
             }
             let data_dir = app.path().app_data_dir()?;
@@ -1525,20 +1549,28 @@ pub fn run() {
             build_info
         ])
         .build(tauri::generate_context!())
-        .expect("error while building tauri application")
-        .run(|handle, event| {
-            // Both quit paths (quit_app and last-window-close) funnel through
-            // ExitRequested: block until the XMP queue drains so acknowledged
-            // verdicts reach their files before the process dies (spec §7).
-            // The face worker parks between photos first — tearing down the
-            // ONNX runtime mid-inference logs spurious kernel errors.
-            if let tauri::RunEvent::ExitRequested { .. } = event {
-                faces::stop_and_wait(std::time::Duration::from_millis(500));
-                if let Some(s) = handle.try_state::<AppState>() {
-                    let _ = xmp::drain_blocking(&s.store, std::time::Duration::from_secs(5));
-                }
+        .expect("error while building tauri application");
+    #[cfg(all(target_os = "macos", feature = "e2e"))]
+    let mut app = app;
+    #[cfg(all(target_os = "macos", feature = "e2e"))]
+    if harness_hidden() {
+        // Set this before App::run: a hidden Regular app can still activate
+        // macOS briefly even when its only window never becomes visible.
+        app.set_activation_policy(tauri::ActivationPolicy::Prohibited);
+    }
+    app.run(|handle, event| {
+        // Both quit paths (quit_app and last-window-close) funnel through
+        // ExitRequested: block until the XMP queue drains so acknowledged
+        // verdicts reach their files before the process dies (spec §7).
+        // The face worker parks between photos first — tearing down the
+        // ONNX runtime mid-inference logs spurious kernel errors.
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            faces::stop_and_wait(std::time::Duration::from_millis(500));
+            if let Some(s) = handle.try_state::<AppState>() {
+                let _ = xmp::drain_blocking(&s.store, std::time::Duration::from_secs(5));
             }
-        });
+        }
+    });
 }
 
 #[cfg(test)]

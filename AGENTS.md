@@ -48,8 +48,10 @@ The intended feeling is:
 - `npm run storybook` — isolated React chrome at `127.0.0.1:6006`; its MCP
   endpoint is `/mcp` for the project-scoped Codex and Claude connections.
 - `npm run storybook:build` — type/bundle every story and generate manifests.
-- `npm run e2e:build && npm run e2e` — synthetic Tauri harness, including axe
-  accessibility and reviewed chrome snapshots; never touches the real Ember DB.
+- `npm run e2e:build && npm run e2e` — hidden synthetic Tauri functional + axe
+  harness; never activates a window and never touches the real Ember DB.
+- `npm run e2e:visual` / `npm run e2e:perf` — explicitly visible-only checks;
+  they can take focus, so warn the user and batch them at an agreed time.
 - `npm run e2e:visual:update` — explicitly replace visual baselines only after
   inspecting `e2e/.visual-output/actual/` and deciding the UI change is correct.
 - `cd src-tauri && cargo test` — Rust unit tests (pairing, journal replay, recipe matcher).

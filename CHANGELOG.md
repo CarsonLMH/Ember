@@ -8,6 +8,9 @@ when in doubt, ask a session to rebuild.
 
 ## 1.4.0 — 2026-08-23
 
+- Dev-only: functional and accessibility E2E runs now start truly hidden and
+  use a prohibited macOS activation policy. Only explicit visual/performance
+  commands may show or focus the test app.
 - `Shift+T` enters a picture-only immersion mode; `Shift+T` or `Esc` restores
   the exact previous panels and inspection overlays without stealing native
   `Tab` focus traversal. Safety/error notices stay visible.

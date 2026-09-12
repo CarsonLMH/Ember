@@ -17,6 +17,7 @@ import {
 // EMBER_E2E_PERF=1 (npm run e2e:perf) switches to the perf gate: only the
 // 05 spec, against the big storm fixture set, on a machine that must be quiet.
 const PERF = process.env.EMBER_E2E_PERF === '1';
+const VISIBLE = PERF || process.env.EMBER_E2E_VISIBLE === '1';
 const UPDATE_VISUAL_BASELINES = process.env.EMBER_UPDATE_VISUAL_BASELINES === '1';
 
 // visual-service v9 checks argv inside each worker, while WDIO does not pass
@@ -29,6 +30,10 @@ if (UPDATE_VISUAL_BASELINES && !process.argv.includes('--update-visual-baseline'
 // The spawned app inherits this process's environment; EMBER_OPEN makes every
 // session (including durability relaunches) open the fixture folder on boot.
 process.env.EMBER_OPEN = PERF ? stormFixturesDir : fixturesDir;
+// Functional and accessibility runs must never activate or flash a native
+// window over the user's desktop. Visual and glass-time perf checks are the
+// explicit exceptions and have separate commands/warnings.
+process.env.EMBER_HIDDEN = VISIBLE ? '0' : '1';
 
 // e2e sandbox (identifier com.cleung.ember.e2e) — wiped per run so cold-open,
 // adoption, and journal state are reproducible. Never touches com.cleung.ember.
@@ -41,11 +46,13 @@ export const config: WebdriverIO.Config = {
   runner: 'local',
   specs: PERF
     ? ['./specs/05-perf-signal.e2e.ts']
-    : [
-        './specs/0[1-4]-*.e2e.ts',
-        './specs/06-accessibility.e2e.ts',
-        './specs/07-visual.e2e.ts',
-      ],
+    : VISIBLE
+      ? [
+          './specs/0[1-4]-*.e2e.ts',
+          './specs/06-accessibility.e2e.ts',
+          './specs/07-visual.e2e.ts',
+        ]
+      : ['./specs/0[1-4]-*.e2e.ts', './specs/06-accessibility.e2e.ts'],
   maxInstances: 1,
   capabilities: [
     {
@@ -62,6 +69,7 @@ export const config: WebdriverIO.Config = {
         appBinaryPath: appBinary,
         driverProvider: 'embedded',
         embeddedPort: EMBEDDED_PORT,
+        env: { EMBER_HIDDEN: VISIBLE ? '0' : '1' },
         captureBackendLogs: true,
         captureFrontendLogs: true,
         startTimeout: 90_000,

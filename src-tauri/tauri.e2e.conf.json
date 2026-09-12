@@ -2,6 +2,20 @@
   "$schema": "https://schema.tauri.app/config/2",
   "identifier": "com.cleung.ember.e2e",
   "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Ember",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 600,
+        "create": false,
+        "visible": false,
+        "focus": false,
+        "backgroundThrottling": "disabled"
+      }
+    ],
     "withGlobalTauri": true,
     "security": {
       "capabilities": [
