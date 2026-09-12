@@ -119,9 +119,9 @@ restores the prior layout; errors remain visible.
 
 ## Checkpoint B: Runtime behavior
 
-- [ ] `npm test` and `npm run build` pass.
-- [ ] Focused E2E for filmstrip and immersion passes.
-- [ ] Storybook surfaces touched by the slice build cleanly.
+- [x] `npm test` and `npm run build` pass.
+- [x] Focused E2E for filmstrip and immersion passes.
+- [x] Storybook surfaces touched by the slice build cleanly.
 
 ## Task 5: Reorganize help and clarify sorting
 
@@ -131,16 +131,16 @@ Rating. Keep `S` cycle and `Shift+S` reverse; add no new sort engine.
 
 **Acceptance criteria:**
 
-- [ ] Help sections are Navigate; Rate & recover; Filter & sort; Inspect photo;
+- [x] Help sections are Navigate; Rate & recover; Filter & sort; Inspect photo;
       Panels & display; Folder & help, plus fallback Other.
-- [ ] Every current binding appears exactly once and custom remaps remain live.
-- [ ] Exact vs N-or-more modifiers and sort choices are immediately scannable.
+- [x] Every current binding appears exactly once and custom remaps remain live.
+- [x] Exact vs N-or-more modifiers and sort choices are immediately scannable.
 
 **Verification:**
 
-- [ ] Component/unit test proves complete, duplicate-free grouping.
-- [ ] Storybook build passes and the rendered sheet is visually inspected.
-- [ ] Accessibility E2E finds no new violations.
+- [x] Component/unit test proves complete, duplicate-free grouping.
+- [x] Storybook build passes and the rendered sheet is visually inspected.
+- [x] Accessibility E2E finds no new violations.
 
 **Dependencies:** Tasks 1, 2, and 4
 

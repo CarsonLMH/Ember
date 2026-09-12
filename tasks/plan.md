@@ -35,8 +35,9 @@ revertible commit.
 - **Use photographic dates.** Retain Date captured, Filename, Rating, and
   Reverse. Do not add filesystem birth time: imports, copies, and cloud tools
   can rewrite it, so it often describes transfer time rather than the photo.
-- **Immersion is session-only and presentation-only.** `Tab` toggles it and
-  `Escape` exits. It suppresses filmstrip, HUDs, docks, face badges, histogram,
+- **Immersion is session-only and presentation-only.** `Shift+T` toggles it,
+  `Escape` exits, and bare `Tab` remains native focus traversal. It suppresses
+  filmstrip, HUDs, docks, face badges, histogram,
   performance HUD, and canvas analysis decorations without changing their
   underlying preferences. Loading, durability failures, and error notices stay
   visible; safety beats purity.

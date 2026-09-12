@@ -43,7 +43,13 @@ const FILTER_LABEL: Record<string, string> = {
   star2plus: '★★ or more',
   star3plus: '★★★ or more',
   star4plus: '★★★★ or more',
-  star5plus: '★★★★★',
+  star5plus: '★★★★★ or more',
+};
+
+const SORT_LABEL: Record<session.SortMode, string> = {
+  capture: 'date captured',
+  name: 'filename',
+  rating: 'rating',
 };
 
 function PerfHud() {
@@ -314,10 +320,13 @@ export default function App() {
       // Help is the one modal whose Escape handling lives here. Close it
       // before changing immersion, and ignore a held key's repeat so it cannot
       // immediately perform a second hidden action.
-      if (e.key === 'Escape' && showCheatRef.current) {
+      if (showCheatRef.current) {
         if (e.repeat) return;
-        e.preventDefault();
-        setShowCheat(false);
+        const action = actionFor(e);
+        if (e.key === 'Escape' || action === 'cheat_sheet') {
+          e.preventDefault();
+          setShowCheat(false);
+        }
         return;
       }
       // Open pickers/palettes own every key (incl. Escape) while mounted.
@@ -623,7 +632,7 @@ export default function App() {
             )}
             {(state.sort !== 'capture' || state.reverse) && (
               <span className="hud-chip">
-                {state.sort}
+                {SORT_LABEL[state.sort]}
                 {state.reverse ? ' ↓' : ''}
               </span>
             )}

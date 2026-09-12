@@ -34,7 +34,7 @@ const DEFAULTS: &[(&str, &[&str], &str)] = &[
     ("filter_min2", &["Ctrl+Shift+2"], "Filter: ★★ or more"),
     ("filter_min3", &["Ctrl+Shift+3"], "Filter: ★★★ or more"),
     ("filter_min4", &["Ctrl+Shift+4"], "Filter: ★★★★ or more"),
-    ("filter_min5", &["Ctrl+Shift+5"], "Filter: ★★★★★"),
+    ("filter_min5", &["Ctrl+Shift+5"], "Filter: ★★★★★ or more"),
     ("recipe_filter", &["c"], "Recipe filter quick-switcher"),
     ("tag_palette", &["g"], "Tag palette"),
     ("tag_filter", &["Shift+g"], "Tag filter quick-switcher"),
@@ -53,7 +53,7 @@ const DEFAULTS: &[(&str, &[&str], &str)] = &[
     (
         "sort_cycle",
         &["s"],
-        "Cycle sort: capture → filename → rating",
+        "Cycle sort: date captured → filename → rating",
     ),
     ("sort_reverse", &["Shift+s"], "Reverse sort order"),
     ("zoom_100", &["z"], "Toggle fit ↔ 100%"),
@@ -198,6 +198,18 @@ mod tests {
             .find(|b| b.action == "filter_min3")
             .unwrap();
         assert_eq!(minimum.keys, vec!["Ctrl+Shift+3"]);
+        let minimum_five = map
+            .bindings
+            .iter()
+            .find(|b| b.action == "filter_min5")
+            .unwrap();
+        assert!(minimum_five.label.ends_with("or more"));
+        let sort = map
+            .bindings
+            .iter()
+            .find(|b| b.action == "sort_cycle")
+            .unwrap();
+        assert!(sort.label.contains("date captured"));
         let immersion = map
             .bindings
             .iter()

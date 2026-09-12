@@ -17,7 +17,7 @@ A fast, reliable macOS photo-culling app for one user, built to replace a commer
 
 ## 3. The loop (primary flows)
 
-1. **Open folder** (Cmd+O or drag) → recursive scan → first image visible **≤1s**, indexing continues in background. Sort: capture time (default) / filename / rating, reverse toggle. Existing XMP ratings in files (e.g. from Capture One) are adopted as initial state.
+1. **Open folder** (Cmd+O or drag) → recursive scan → first image visible **≤1s**, indexing continues in background. Sort: Date captured (EXIF capture time, filesystem modified time only as fallback; default) / Filename / Rating, plus reverse. Filesystem creation time is deliberately excluded because copies and cloud sync rewrite it. Existing XMP ratings in files (e.g. from Capture One) are adopted as initial state.
 2. **First pass**: arrow through everything. `1–5` stars standouts in place (`V`
    opts into auto-advance), `X` trashes garbage, arrows skip B-roll. All
    navigation ≤50ms per flip.
@@ -58,7 +58,10 @@ A fast, reliable macOS photo-culling app for one user, built to replace a commer
 `F` AF-point 100% · `A` AF overlay · `H` histogram · `B` blinkies · `I` EXIF ·
 `T` filmstrip · `Shift+T` immersion · `V` auto-advance · `U` cycle filter · `S` sort · `R` refresh ·
 `Cmd+Z/Shift+Z` undo/redo · `?` cheat sheet.
-Remapping via a human-editable config file (change a line, relaunch); `?` overlay always reflects actual binds. In-app editor is post-v1.
+Remapping via a human-editable config file (change a line, relaunch); the `?`
+overlay always reflects actual binds and groups them as Navigate, Rate &
+recover, Filter & sort (with exact and N-or-more ratings separated), Inspect
+photo, Panels & display, and Folder & help. In-app editor is post-v1.
 
 ## 7. Durability & persistence
 

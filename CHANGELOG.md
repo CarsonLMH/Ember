@@ -8,6 +8,11 @@ when in doubt, ask a session to rebuild.
 
 ## 1.4.0 — 2026-08-23
 
+- The `?` shortcut sheet is now grouped by intent, with exact-rating and
+  rating-or-more filters separated so the right chord is easy to find. It is
+  also a real focused modal: culling keys cannot act behind it.
+- Sort wording now says what Ember actually uses: Date captured, Filename, or
+  Rating, with `S` to cycle and `Shift+S` to reverse.
 - Dev-only: functional and accessibility E2E runs now start truly hidden and
   use a prohibited macOS activation policy. Only explicit visual/performance
   commands may show or focus the test app.
