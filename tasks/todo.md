@@ -158,14 +158,16 @@ launch the accepted app locally.
 
 **Acceptance criteria:**
 
-- [ ] Unit, TypeScript build, harness, Storybook, Rust test/fmt/clippy, E2E,
+- [x] Unit, TypeScript build, harness, Storybook, Rust test/fmt/clippy, E2E,
       accessibility, and durability checks pass.
-- [ ] Normal and faces-active real-photo storms remain p99 <= 50 ms, zero
+- [x] Normal and faces-active real-photo storms remain p99 <= 50 ms, zero
       steady-state miss serves, and cold open <= 1 s.
 - [ ] Installed app's build stamp matches the final commit and the prior app is
       recoverable until launch verification succeeds.
 
-**Verification:** The commands and measurements above are the task.
+**Verification:** The commands and measurements above are the task. The legacy
+person-fixture gate was explicitly skipped at the owner's direction; its
+fixture-quality issue is outside this requested feature set.
 
 **Dependencies:** Tasks 1-5
 
@@ -175,6 +177,6 @@ launch the accepted app locally.
 
 ## Checkpoint C: Complete
 
-- [ ] All requested behavior is implemented and documented.
+- [x] All requested behavior is implemented and documented.
 - [ ] Every check run and every check omitted is reported.
 - [ ] Working tree is clean with small conventional commits.

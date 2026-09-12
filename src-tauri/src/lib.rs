@@ -1363,14 +1363,15 @@ pub fn run() {
     );
     let app = builder
         .setup(|app| {
-            // The strict hidden E2E path starts with a Prohibited macOS
-            // activation policy and no auto-created window. Switch to
-            // Accessory (still non-activating), then create the hidden webview
-            // only after the event loop is ready for WebDriver to register it.
+            // Strict hidden harnesses start with a Prohibited macOS activation
+            // policy and no auto-created window. Switch to Accessory (still
+            // non-activating), then create the hidden webview only after the
+            // event loop is ready. Visible E2E runs use the same manual window
+            // config, then reveal it below.
+            let manual_main = harness_hidden();
             #[cfg(feature = "e2e")]
-            if app.config().identifier == "com.cleung.ember.e2e"
-                && app.get_webview_window("main").is_none()
-            {
+            let manual_main = manual_main || app.config().identifier == "com.cleung.ember.e2e";
+            if manual_main && app.get_webview_window("main").is_none() {
                 #[cfg(target_os = "macos")]
                 if harness_hidden() {
                     app.handle()
@@ -1550,9 +1551,9 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
-    #[cfg(all(target_os = "macos", feature = "e2e"))]
+    #[cfg(target_os = "macos")]
     let mut app = app;
-    #[cfg(all(target_os = "macos", feature = "e2e"))]
+    #[cfg(target_os = "macos")]
     if harness_hidden() {
         // Set this before App::run: a hidden Regular app can still activate
         // macOS briefly even when its only window never becomes visible.

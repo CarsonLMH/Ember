@@ -171,8 +171,9 @@ canvas path, native operations, or real-photo workflows.
   stages and commits all changes, builds, terminates the installed debug app,
   and launches the replacement.
 - `scripts/checks.sh` and `scripts/gate.sh` require a real photo fixture path
-  and terminate matching dev processes. Never invent a path; confirm it and
-  warn before disrupting a running app.
+  and terminate matching dev processes. The gate window is strictly off-screen
+  and non-activating, but still confirm the path and warn before interrupting a
+  running dev process.
 - Run verification proportionate to the change. Useful focused checks are
   `npm test`, `npm run build`, `cd src-tauri && cargo test`,
   `cd src-tauri && cargo fmt --check`, and

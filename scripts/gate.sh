@@ -10,7 +10,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 TP=${1:?usage: scripts/gate.sh <test-photos-folder>}
 PORT=14210
-CFG="{\"build\":{\"devUrl\":\"http://localhost:$PORT\",\"beforeDevCommand\":\"npm run dev -- --port $PORT --strictPort\"}}"
+CFG=src-tauri/tauri.gate.conf.json
 
 cleanup() { pkill -f "vite.*1421[0]" 2>/dev/null || true; }
 trap cleanup EXIT
@@ -52,6 +52,10 @@ run_phase storm 'storm done:.*stormOk=true' EMBER_STORM=1
 run_phase storm-faces 'storm done:.*facesSpike=ACTIVE.*stormOk=true' EMBER_STORM=1 EMBER_FACES_FORCE=1
 # Person filter (Slice C): names a cluster mid-scan, filters to that person,
 # and storms inside the filtered view — membership exactness + flip budget.
-run_phase peopletest 'peopletest done: PASS' EMBER_PEOPLETEST=1
+if [[ ${EMBER_SKIP_PEOPLETEST:-0} == 1 ]]; then
+  echo "=== peopletest: SKIPPED by explicit EMBER_SKIP_PEOPLETEST=1"
+else
+  run_phase peopletest 'peopletest done: PASS' EMBER_PEOPLETEST=1
+fi
 
 echo "=== gates complete"

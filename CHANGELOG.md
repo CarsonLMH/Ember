@@ -13,9 +13,9 @@ when in doubt, ask a session to rebuild.
   also a real focused modal: culling keys cannot act behind it.
 - Sort wording now says what Ember actually uses: Date captured, Filename, or
   Rating, with `S` to cycle and `Shift+S` to reverse.
-- Dev-only: functional and accessibility E2E runs now start truly hidden and
-  use a prohibited macOS activation policy. Only explicit visual/performance
-  commands may show or focus the test app.
+- Dev-only: functional, accessibility, and real-photo gate runs now start
+  truly hidden and use a prohibited macOS activation policy. Only explicit
+  visual/performance E2E commands may show or focus the test app.
 - `Shift+T` enters a picture-only immersion mode; `Shift+T` or `Esc` restores
   the exact previous panels and inspection overlays without stealing native
   `Tab` focus traversal. Safety/error notices stay visible.

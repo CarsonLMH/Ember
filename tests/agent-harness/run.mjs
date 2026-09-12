@@ -28,6 +28,8 @@ const claude = read('CLAUDE.md');
 const codexConfig = read('.codex/config.toml');
 const codexSkill = read('.agents/skills/ember-design-audit/SKILL.md');
 const claudeMcp = JSON.parse(read('.mcp.json'));
+const gateConfig = JSON.parse(read('src-tauri/tauri.gate.conf.json'));
+const gateScript = read('scripts/gate.sh');
 
 check(
   statSync(resolve(root, 'AGENTS.md')).size <= 32 * 1024,
@@ -44,6 +46,19 @@ check(
 check(
   statSync(resolve(root, '.claude/skills/design-audit/SKILL.md')).isFile(),
   'canonical design-audit workflow exists',
+);
+
+const gateWindow = gateConfig.app?.windows?.find((window) => window.label === 'main');
+check(
+  gateWindow?.create === false &&
+    gateWindow?.visible === false &&
+    gateWindow?.focus === false &&
+    gateWindow?.backgroundThrottling === 'disabled',
+  'real-photo gates use a strict off-screen window configuration',
+);
+check(
+  gateScript.includes('src-tauri/tauri.gate.conf.json'),
+  'real-photo gate script uses the strict off-screen configuration',
 );
 
 const claudeServers = Object.keys(claudeMcp.mcpServers ?? {})
