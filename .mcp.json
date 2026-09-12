@@ -2,11 +2,8 @@
   "mcpServers": {
     "tauri": {
       "type": "stdio",
-      "command": "npx",
-      "args": [
-        "-y",
-        "@hypothesi/tauri-mcp-server"
-      ],
+      "command": "./node_modules/.bin/mcp-server-tauri",
+      "args": [],
       "env": {}
     },
     "ember-storybook": {

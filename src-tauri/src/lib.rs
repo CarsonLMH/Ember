@@ -1095,8 +1095,8 @@ fn set_faces_ignored(
         .map_err(|e| e.to_string())
 }
 
-/// Explicit user act, offered by the UI when a rename collides ("Nai" was a
-/// typo for "Nati"). Pulled forward from Slice D on first-acceptance feedback.
+/// Explicit user act, offered by the UI when a rename collides ("Aelx" was a
+/// typo for "Alex"). Pulled forward from Slice D on first-acceptance feedback.
 #[tauri::command]
 fn merge_persons(
     state: tauri::State<'_, AppState>,

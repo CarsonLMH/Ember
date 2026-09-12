@@ -35,6 +35,44 @@ perf-reports/
 e2e/fixtures/
 e2e/.visual-output/
 
+# Local secrets and signing material
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.mobileprovision
+
+# Local Ember state and database copies
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+
+# Camera originals and metadata sidecars. Public demo media belongs in an
+# explicitly reviewed assets directory, never in a local photo-fixture folder.
+*.[Rr][Aa][Ff]
+*.[Cc][Rr]2
+*.[Cc][Rr]3
+*.[Nn][Ee][Ff]
+*.[Aa][Rr][Ww]
+*.[Dd][Nn][Gg]
+*.[Rr][Ww]2
+*.[Oo][Rr][Ff]
+*.[Pp][Ee][Ff]
+*.[Ss][Rr][Ww]
+*.[Ii][Ii][Qq]
+*.[Xx][Mm][Pp]
+/raftest/
+/peopletest/
+
 # Agent-local state
 CLAUDE.local.md
 .claude/settings.local.json

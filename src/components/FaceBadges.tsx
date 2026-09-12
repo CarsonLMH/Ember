@@ -90,7 +90,7 @@ export default function FaceBadges({ faces }: { faces: FaceOut[] }) {
    * bulk-naming op: it registers an undo entry nothing can reach from here and
    * asks for a folder-wide auto-assign sweep, for one face the user just told
    * us about. Names match the way the backend matches them — normalized, so
-   * "nati" finds "Nati".
+   * "alex" finds "Alex".
    */
   const nameFace = (faceId: number, typed: string) => {
     const norm = typed.trim().toLowerCase();

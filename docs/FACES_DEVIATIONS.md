@@ -18,10 +18,10 @@ privacy semantics are all as specified.
 | **Cache janitor** (`janitor.rs`, `[cache] max_mb`, default 2GB) | The user noticed `~/Library/Caches/com.cleung.ember` at 430MB and growing forever. A pre-existing hole (it predates faces — ~1MB/photo for every folder ever opened, never cleaned). Evicts whole per-photo artifact groups, DB-orphans first then least-recently-opened folders, never the open folder. |
 | **`delete_person`** | Not in the plan. Needed for guaranteed gate-harness teardown after test data ("HarnessPerson") leaked into the user's real DB; also the honest answer to "I created this person by mistake". |
 | **`clear_auto_assignments(folder)`** → panel *"clear auto-labels"* | Recovery when recognition has made a mess: drops every machine guess, keeps user labels **and** rejections, re-runs the sweep. Added after a bad detection threshold flooded a folder with false matches. |
-| **`facedet::one_face_per_person`** | The user found a photo showing "Nati" twice (neither was her). One person cannot be two faces in one photo — now enforced in **both** auto paths (embed-time and sweep): strongest candidate wins, never contests a user or carried assignment. |
+| **`facedet::one_face_per_person`** | The user found a photo showing the same person label twice (both matches were wrong). One person cannot be two faces in one photo — now enforced in **both** auto paths (embed-time and sweep): strongest candidate wins, never contests a user or carried assignment. |
 | **`facedet::filter_exemplar_outliers`** | A confirmed face that resembles none of that person's other confirmed faces (a named back-of-head shot) is junk — and greedy max-min exemplar selection *loves* outliers. Below the same-identity floor (0.35 max-cosine vs siblings) it can't be a reference. Makes naming junk shots harmless. |
 | **Loose-faces section** (faces seen only once) | The plan only surfaced clusters ≥2, so singletons were invisible and unreachable — 56 in one folder. Click-select → name. Deliberately **rescue-only**: no dismiss, because unlabeled is a loose face's resting state (the user's insight). |
-| **Per-chip ✕ in clusters + "restore N" + "don't label removed"** | Mixed clusters happen (a stranger bridged into Nati's group by junk detections). ✕ removes a face from the group before naming. |
+| **Per-chip ✕ in clusters + "restore N" + "don't label removed"** | Mixed clusters happen (a stranger can bridge into a named person's group through junk detections). ✕ removes a face from the group before naming. |
 | **Chip click → jump the viewer to that photo** | The cheapest possible answer to "who *is* this?" — full context, zero new UI. |
 | **`Shift+f` toggles face badges** | Requested; persisted in localStorage. |
 | **`rescan_faces`** exposed in the panel | Planned as a Slice D command; pulled forward because a detection-setting change is invisible without it (already-'ok' photos are never re-examined). |
@@ -34,7 +34,7 @@ privacy semantics are all as specified.
 
 - **Rename onto an existing name is a merge offer, not an error.** The plan
   had `merge_persons` as a bare Slice D command; the user's real case was a
-  typo ("Nai" → "Nati"), so `rename_person` reports the collision and the
+  typo ("Aelx" → "Alex"), so `rename_person` reports the collision and the
   panel offers to merge.
 - **Cluster rows expose every member.** The plan said "up to 4 chips +
   explicit total size"; a hidden member can't be excluded before naming, so

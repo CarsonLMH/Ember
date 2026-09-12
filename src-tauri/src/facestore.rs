@@ -2501,7 +2501,7 @@ mod tests {
         let (gen, ids) = seed_faces(&mut worker);
         // A user edit moves face_revision past the commit's value, so the two
         // columns differ in a real library.
-        store.face_set_name(&ids[..1], "Nati").unwrap();
+        store.face_set_name(&ids[..1], "Alex").unwrap();
         let face_rev = face_revision(&worker, "p1").unwrap();
         drop(store);
         // Rewind the file to its v5 shape (the columns and the counter row
@@ -2690,10 +2690,10 @@ mod tests {
     fn representative_stays_in_open_folder_and_survives_rescan() {
         let (store, mut worker, folder_a, _) = setup();
         let (gen, ids) = seed_faces(&mut worker);
-        let (res, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
-        let nati = res.person.id;
+        let (res, _) = store.face_set_name(&ids[..1], "Alex").unwrap();
+        let alex = res.person.id;
 
-        // A second folder with one stronger, user-confirmed face of Nati.
+        // A second folder with one stronger, user-confirmed face of Alex.
         let folder_b = store.open_folder("/tmp/faces-y").unwrap().folder_id;
         let q1 = Arc::new(PhotoEntry {
             id: "q1".into(),
@@ -2721,7 +2721,7 @@ mod tests {
         let q1_face: i64 = worker
             .query_row("SELECT id FROM faces WHERE photo_id='q1'", [], |r| r.get(0))
             .unwrap();
-        store.face_assign(q1_face, Some(nati)).unwrap();
+        store.face_assign(q1_face, Some(alex)).unwrap();
         worker
             .execute(
                 "UPDATE faces SET det_score = 1.0 WHERE id = ?1",
@@ -2734,7 +2734,7 @@ mod tests {
                 .list_persons(folder)
                 .unwrap()
                 .into_iter()
-                .find(|p| p.id == nati)
+                .find(|p| p.id == alex)
                 .unwrap()
         };
         // Each folder shows a face from its own photos, whatever scores best
@@ -2778,11 +2778,11 @@ mod tests {
         let (store, mut worker, folder_id, _) = setup();
         let (_, ids) = seed_faces(&mut worker);
 
-        let (res, op) = store.face_set_name(&ids[..1], " Nati ").unwrap();
-        assert_eq!(res.person.name, "Nati", "display name trimmed");
+        let (res, op) = store.face_set_name(&ids[..1], " Alex ").unwrap();
+        assert_eq!(res.person.name, "Alex", "display name trimmed");
         assert!(op.person_created);
         // Same person via case/space variants.
-        let (res2, op2) = store.face_set_name(&ids[1..], "nati").unwrap();
+        let (res2, op2) = store.face_set_name(&ids[1..], "alex").unwrap();
         assert_eq!(
             res2.person.id, res.person.id,
             "name_norm collapses variants"
@@ -2831,7 +2831,7 @@ mod tests {
     fn undo_skips_photos_edited_after_the_op() {
         let (store, mut worker, _, _) = setup();
         let (_, ids) = seed_faces(&mut worker);
-        let (res, op) = store.face_set_name(&ids, "Nati").unwrap();
+        let (res, op) = store.face_set_name(&ids, "Alex").unwrap();
         // A later edit on the same photo bumps its revision…
         store.face_assign(ids[1], None).unwrap();
         // …so undo must leave the whole photo alone (later edits win).
@@ -2845,16 +2845,16 @@ mod tests {
     fn corrections_write_rejections_for_auto_and_manual() {
         let (store, mut worker, _, _) = setup();
         let (_, ids) = seed_faces(&mut worker);
-        let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
+        let (alex, _) = store.face_set_name(&ids[..1], "Alex").unwrap();
         // Manual mistake corrected by renaming the face to Dani → rejection
-        // of Nati recorded even though the displaced assignment was manual.
+        // of Alex recorded even though the displaced assignment was manual.
         let (dani, _) = store.face_set_name(&ids[..1], "Dani").unwrap();
         {
             let conn = store.lock_conn();
             let n: i64 = conn
                 .query_row(
                     "SELECT COUNT(*) FROM face_person_rejections WHERE face_id=?1 AND person_id=?2",
-                    params![ids[0], nati.person.id],
+                    params![ids[0], alex.person.id],
                     |r| r.get(0),
                 )
                 .unwrap();
@@ -2865,7 +2865,7 @@ mod tests {
             let conn = store.lock_conn();
             conn.execute(
                 "UPDATE faces SET person_id=?2, assigned_by='auto', similarity=0.5 WHERE id=?1",
-                params![ids[1], nati.person.id],
+                params![ids[1], alex.person.id],
             )
             .unwrap();
         }
@@ -2874,7 +2874,7 @@ mod tests {
         let n: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM face_person_rejections WHERE face_id=?1 AND person_id=?2",
-                params![ids[1], nati.person.id],
+                params![ids[1], alex.person.id],
                 |r| r.get(0),
             )
             .unwrap();
@@ -2885,10 +2885,10 @@ mod tests {
     fn reject_clears_assignment_and_sticks() {
         let (store, mut worker, _, _) = setup();
         let (_, ids) = seed_faces(&mut worker);
-        let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
-        store.face_reject(ids[0], nati.person.id).unwrap();
+        let (alex, _) = store.face_set_name(&ids[..1], "Alex").unwrap();
+        store.face_reject(ids[0], alex.person.id).unwrap();
         let faces = store.faces_for_photo("p1").unwrap().unwrap();
-        assert_eq!(faces[0].person_id, None, "\"not Nati\" cleared the face");
+        assert_eq!(faces[0].person_id, None, "\"not Alex\" cleared the face");
         let conn = store.lock_conn();
         let n: i64 = conn
             .query_row(
@@ -2904,7 +2904,7 @@ mod tests {
     fn carry_over_preserves_state_and_rejections_through_rescan() {
         let (store, mut worker, _, _) = setup();
         let (gen, ids) = seed_faces(&mut worker);
-        let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
+        let (alex, _) = store.face_set_name(&ids[..1], "Alex").unwrap();
         let (dani, _) = store.face_set_name(&ids[1..], "Dani").unwrap();
         store.face_reject(ids[1], dani.person.id).unwrap(); // "not Dani" on face 2
         {
@@ -2937,7 +2937,7 @@ mod tests {
 
         let faces = store.faces_for_photo("p1").unwrap().unwrap();
         assert_eq!(faces.len(), 3);
-        assert_eq!(faces[0].person_id, Some(nati.person.id), "Nati survived");
+        assert_eq!(faces[0].person_id, Some(alex.person.id), "Alex survived");
         assert_eq!(faces[0].assigned_by.as_deref(), Some("user"));
         assert!(faces[1].ignored, "ignored flag survived");
         assert_eq!(faces[2].person_id, None, "new face starts unnamed");
@@ -2958,7 +2958,7 @@ mod tests {
     fn cross_generation_carry_over_is_geometric_only() {
         let (store, mut worker, folder_id, _) = setup();
         let (_, ids) = seed_faces(&mut worker);
-        let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
+        let (alex, _) = store.face_set_name(&ids[..1], "Alex").unwrap();
 
         // New model generation: old embeddings must be withheld from the
         // correspondence (and from clustering).
@@ -2983,7 +2983,7 @@ mod tests {
         .unwrap();
         assert!(matches!(out, CommitOutcome::Committed(_)));
         let faces = store.faces_for_photo("p1").unwrap().unwrap();
-        assert_eq!(faces[0].person_id, Some(nati.person.id));
+        assert_eq!(faces[0].person_id, Some(alex.person.id));
 
         // Mixed-generation exclusion: clustering only sees current-gen rows.
         let clusters = store.face_clusters(folder_id, 0.4).unwrap().clusters;
@@ -3022,7 +3022,7 @@ mod tests {
 
         // Guard 1: user edit bumped face_revision mid-flight.
         let snap = snapshot(&worker, "p1", gen).unwrap();
-        store.face_set_name(&ids[..1], "Nati").unwrap();
+        store.face_set_name(&ids[..1], "Alex").unwrap();
         let out = commit_scan(
             &mut worker,
             "p1",
@@ -3096,7 +3096,7 @@ mod tests {
     fn delete_all_is_durable_and_discards_in_flight() {
         let (store, mut worker, folder_id, path) = setup();
         let (gen, ids) = seed_faces(&mut worker);
-        store.face_set_name(&ids[..1], "Nati").unwrap();
+        store.face_set_name(&ids[..1], "Alex").unwrap();
 
         // Worker snapshotted BEFORE the delete → its commit must die.
         let snap = snapshot(&worker, "p2", gen).unwrap();
@@ -3507,7 +3507,7 @@ mod tests {
     fn embedding_reads_ignore_photos_without_a_successful_scan() {
         let (store, mut worker, _, _) = setup();
         let (gen, ids) = seed_faces(&mut worker);
-        store.face_set_name(&ids[..1], "Nati").unwrap();
+        store.face_set_name(&ids[..1], "Alex").unwrap();
         assert_eq!(person_prototypes(&worker, gen, 5).unwrap().len(), 1);
 
         // A pixel change marks p1 stale — its confirmed face is no longer
@@ -3564,7 +3564,7 @@ mod tests {
     fn a_failed_insert_rolls_the_whole_commit_back() {
         let (store, mut worker, _, _) = setup();
         let (gen, ids) = seed_faces(&mut worker);
-        let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
+        let (alex, _) = store.face_set_name(&ids[..1], "Alex").unwrap();
         let snap = snapshot(&worker, "p1", gen).unwrap();
         // A proposal naming a person who doesn't exist trips the foreign key
         // on insert, after the DELETE has already run inside the transaction.
@@ -3573,7 +3573,7 @@ mod tests {
             "p1",
             &snap,
             &[nf(R1, &emb(1.0, 0.0)), nf(R2, &emb(0.0, 1.0))],
-            &[None, Some((nati.person.id + 999, 0.9))],
+            &[None, Some((alex.person.id + 999, 0.9))],
             5,
             5,
             &source_ok,
@@ -3581,7 +3581,7 @@ mod tests {
         assert!(err.is_err(), "the bad insert must fail, not be swallowed");
         let faces = store.faces_for_photo("p1").unwrap().unwrap();
         assert_eq!(faces.len(), 2, "rolled back to the pre-commit rows");
-        assert_eq!(faces[0].person_id, Some(nati.person.id), "name intact");
+        assert_eq!(faces[0].person_id, Some(alex.person.id), "name intact");
     }
 
     #[test]
@@ -3637,7 +3637,7 @@ mod tests {
                 .unwrap();
             v
         };
-        store.face_set_name(&ids, "Nati").unwrap();
+        store.face_set_name(&ids, "Alex").unwrap();
         let map = store.person_map(folder_id).unwrap();
         assert!(map.contains_key("p1"));
         assert!(!map.contains_key("p2"), "trashed photo not in person_map");
@@ -3645,39 +3645,39 @@ mod tests {
 
     // ---------- Slice B: auto-recognition ----------
 
-    /// Seed p1 with two named faces (Nati at e(1,0), Dani at e(0,1)) and
-    /// p2/p3 with unassigned faces; returns (gen, nati_id, dani_id).
+    /// Seed p1 with two named faces (Alex at e(1,0), Dani at e(0,1)) and
+    /// p2/p3 with unassigned faces; returns (gen, alex_id, dani_id).
     fn seed_recognition(store: &Store, worker: &mut Connection) -> (i64, i64, i64) {
         let (gen, ids) = seed_faces(worker);
-        let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
+        let (alex, _) = store.face_set_name(&ids[..1], "Alex").unwrap();
         let (dani, _) = store.face_set_name(&ids[1..], "Dani").unwrap();
-        // p2: a face nearly identical to Nati; p3: an ambiguous face.
+        // p2: a face nearly identical to Alex; p3: an ambiguous face.
         for (photo, e) in [("p2", emb(0.98, 0.05)), ("p3", emb(1.0, 1.0))] {
             let snap = snapshot(worker, photo, gen).unwrap();
             commit_scan(worker, photo, &snap, &[nf(R1, &e)], &[], 1, 1, &source_ok).unwrap();
         }
-        (gen, nati.person.id, dani.person.id)
+        (gen, alex.person.id, dani.person.id)
     }
 
     #[test]
     fn sweep_assigns_confident_skips_ambiguous_and_rejected() {
         let (store, mut worker, _, _) = setup();
-        let (gen, nati, _) = seed_recognition(&store, &mut worker);
+        let (gen, alex, _) = seed_recognition(&store, &mut worker);
         let protos = person_prototypes(&worker, gen, 5).unwrap();
         assert_eq!(protos.len(), 2);
 
-        // p2 (clear Nati lookalike) assigns; p3 (equidistant) must not.
+        // p2 (clear Alex lookalike) assigns; p3 (equidistant) must not.
         let n = sweep_photo(&mut worker, "p2", gen, &protos, 0.40, 0.05).unwrap();
         assert_eq!(n, 1);
         let f = &store.faces_for_photo("p2").unwrap().unwrap()[0];
-        assert_eq!(f.person_id, Some(nati));
+        assert_eq!(f.person_id, Some(alex));
         assert_eq!(f.assigned_by.as_deref(), Some("auto"));
         let n = sweep_photo(&mut worker, "p3", gen, &protos, 0.40, 0.05).unwrap();
         assert_eq!(n, 0, "ambiguous face stays for the human");
 
-        // "not Nati" on p2's face, then re-sweep: rejection is absolute.
+        // "not Alex" on p2's face, then re-sweep: rejection is absolute.
         let fid = f.face_id;
-        store.face_reject(fid, nati).unwrap();
+        store.face_reject(fid, alex).unwrap();
         let n = sweep_photo(&mut worker, "p2", gen, &protos, 0.40, 0.05).unwrap();
         assert_eq!(n, 0, "\"not X\" survives the sweep, forever");
         let f = &store.faces_for_photo("p2").unwrap().unwrap()[0];
@@ -3692,11 +3692,11 @@ mod tests {
     #[test]
     fn auto_assignments_never_train_prototypes() {
         let (store, mut worker, _, _) = setup();
-        let (gen, nati, _) = seed_recognition(&store, &mut worker);
+        let (gen, alex, _) = seed_recognition(&store, &mut worker);
         let before: usize = person_prototypes(&worker, gen, 5)
             .unwrap()
             .iter()
-            .find(|p| p.person_id == nati)
+            .find(|p| p.person_id == alex)
             .unwrap()
             .exemplars
             .len();
@@ -3705,7 +3705,7 @@ mod tests {
         let after: usize = person_prototypes(&worker, gen, 5)
             .unwrap()
             .iter()
-            .find(|p| p.person_id == nati)
+            .find(|p| p.person_id == alex)
             .unwrap()
             .exemplars
             .len();
@@ -3719,10 +3719,10 @@ mod tests {
     fn embed_time_proposals_fill_only_uncarried_faces() {
         let (store, mut worker, _, _) = setup();
         let (gen, ids) = seed_faces(&mut worker);
-        let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
+        let (alex, _) = store.face_set_name(&ids[..1], "Alex").unwrap();
         store.mark_face_stale("p1").unwrap();
 
-        // Rescan: face 1 carries Nati (user); face 2 carries nothing and has
+        // Rescan: face 1 carries Alex (user); face 2 carries nothing and has
         // a proposal; a brand-new face 3 has a proposal too.
         let snap = snapshot(&worker, "p1", gen).unwrap();
         let out = commit_scan(
@@ -3735,9 +3735,9 @@ mod tests {
                 nf([0.4, 0.6, 0.2, 0.2], &emb(0.9, 0.1)),
             ],
             &[
-                Some((nati.person.id, 0.99)), // must be IGNORED (carried user state wins)
+                Some((alex.person.id, 0.99)), // must be IGNORED (carried user state wins)
                 None,
-                Some((nati.person.id, 0.61)),
+                Some((alex.person.id, 0.61)),
             ],
             2,
             2,
@@ -3748,7 +3748,7 @@ mod tests {
         let faces = store.faces_for_photo("p1").unwrap().unwrap();
         assert_eq!(faces[0].assigned_by.as_deref(), Some("user"), "carried");
         assert_eq!(faces[1].person_id, None);
-        assert_eq!(faces[2].person_id, Some(nati.person.id));
+        assert_eq!(faces[2].person_id, Some(alex.person.id));
         assert_eq!(faces[2].assigned_by.as_deref(), Some("auto"));
     }
 
@@ -3756,7 +3756,7 @@ mod tests {
     fn undo_naming_clears_the_sweeps_auto_assignments() {
         let (store, mut worker, folder_id, _) = setup();
         let (gen, ids) = seed_faces(&mut worker);
-        // p2 gets an unassigned Nati-lookalike BEFORE naming.
+        // p2 gets an unassigned Alex-lookalike BEFORE naming.
         let snap = snapshot(&worker, "p2", gen).unwrap();
         commit_scan(
             &mut worker,
@@ -3770,7 +3770,7 @@ mod tests {
         )
         .unwrap();
 
-        let (_, op) = store.face_set_name(&ids[..1], "Nati").unwrap();
+        let (_, op) = store.face_set_name(&ids[..1], "Alex").unwrap();
         // The post-naming sweep auto-assigns p2's face.
         let protos = person_prototypes(&worker, gen, 5).unwrap();
         sweep_photo(&mut worker, "p2", gen, &protos, 0.40, 0.05).unwrap();
@@ -3808,8 +3808,8 @@ mod tests {
             )
             .unwrap();
         }
-        // Naming Nati once, then the sweep auto-labels p2.
-        store.face_set_name(&ids[..1], "Nati").unwrap();
+        // Naming Alex once, then the sweep auto-labels p2.
+        store.face_set_name(&ids[..1], "Alex").unwrap();
         let protos = person_prototypes(&worker, gen, 5).unwrap();
         sweep_photo(&mut worker, "p2", gen, &protos, 0.40, 0.05).unwrap();
         let p2_face = store.faces_for_photo("p2").unwrap().unwrap()[0].clone();
@@ -3817,7 +3817,7 @@ mod tests {
 
         // A SECOND naming into the same, existing person.
         let p3_face = store.faces_for_photo("p3").unwrap().unwrap()[0].face_id;
-        let (_, op2) = store.face_set_name(&[p3_face], "Nati").unwrap();
+        let (_, op2) = store.face_set_name(&[p3_face], "Alex").unwrap();
         assert!(!op2.person_created);
 
         assert_eq!(store.undo_naming(&op2).unwrap(), 1);
@@ -3841,16 +3841,16 @@ mod tests {
     fn undo_leaves_a_rejection_recreated_after_the_op() {
         let (store, mut worker, _, _) = setup();
         let (_, ids) = seed_faces(&mut worker);
-        let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
-        // Correcting to Dani records "not Nati" on that face — this is the op
+        let (alex, _) = store.face_set_name(&ids[..1], "Alex").unwrap();
+        // Correcting to Dani records "not Alex" on that face — this is the op
         // we will undo.
         let (_, op) = store.face_set_name(&ids[..1], "Dani").unwrap();
-        assert_eq!(op.rejections, vec![(ids[0], nati.person.id)]);
+        assert_eq!(op.rejections, vec![(ids[0], alex.person.id)]);
 
-        // Later edits: the user re-assigns to Nati (retracting the rejection),
-        // then rejects Nati again. Both bump p1's revision.
-        store.face_assign(ids[0], Some(nati.person.id)).unwrap();
-        store.face_reject(ids[0], nati.person.id).unwrap();
+        // Later edits: the user re-assigns to Alex (retracting the rejection),
+        // then rejects Alex again. Both bump p1's revision.
+        store.face_assign(ids[0], Some(alex.person.id)).unwrap();
+        store.face_reject(ids[0], alex.person.id).unwrap();
 
         assert_eq!(store.undo_naming(&op).unwrap(), 0, "later edits win");
         let n: i64 = store
@@ -3858,7 +3858,7 @@ mod tests {
             .query_row(
                 "SELECT COUNT(*) FROM face_person_rejections
                  WHERE face_id = ?1 AND person_id = ?2",
-                params![ids[0], nati.person.id],
+                params![ids[0], alex.person.id],
                 |r| r.get(0),
             )
             .unwrap();
@@ -3874,7 +3874,7 @@ mod tests {
     fn undo_is_ineligible_for_a_photo_re_detected_since_the_naming() {
         let (store, mut worker, folder_id, _) = setup();
         let (gen, ids) = seed_faces(&mut worker);
-        let (nati, op) = store.face_set_name(&ids[..1], "Nati").unwrap();
+        let (alex, op) = store.face_set_name(&ids[..1], "Alex").unwrap();
 
         // The worker re-detects p1 at the same rects: carry-over keeps the
         // name, but every face row is a NEW row with a new id.
@@ -3894,7 +3894,7 @@ mod tests {
         let after = store.faces_for_photo("p1").unwrap().unwrap();
         assert_eq!(
             after[0].person_id,
-            Some(nati.person.id),
+            Some(alex.person.id),
             "carry-over kept the name"
         );
         // The replacement row may even carry the SAME id: SQLite hands out
@@ -3915,7 +3915,7 @@ mod tests {
         );
         assert_eq!(
             store.faces_for_photo("p1").unwrap().unwrap()[0].person_id,
-            Some(nati.person.id),
+            Some(alex.person.id),
             "and undo left the surviving state alone instead of half-erasing it"
         );
         assert_eq!(
@@ -3947,7 +3947,7 @@ mod tests {
             )
             .unwrap();
         }
-        store.face_set_name(&ids[..1], "Nati").unwrap();
+        store.face_set_name(&ids[..1], "Alex").unwrap();
         let protos = person_prototypes(&worker, gen, 5).unwrap();
         sweep_photo(&mut worker, "p2", gen, &protos, 0.40, 0.05).unwrap();
         assert_eq!(
@@ -3960,7 +3960,7 @@ mod tests {
         // A second naming into the same person captures p2's auto label as
         // pre-existing…
         let p3_face = store.faces_for_photo("p3").unwrap().unwrap()[0].face_id;
-        let (_, op2) = store.face_set_name(&[p3_face], "Nati").unwrap();
+        let (_, op2) = store.face_set_name(&[p3_face], "Alex").unwrap();
         // …and then p2 is re-detected, giving that label a new row id.
         let snap = snapshot(&worker, "p2", gen).unwrap();
         commit_scan(
@@ -3993,7 +3993,7 @@ mod tests {
     fn carry_over_is_delete_then_insert_and_rolls_back_intact() {
         let (store, mut worker, _, _) = setup();
         let (gen, ids) = seed_faces(&mut worker);
-        let (nati, _) = store.face_set_name(&ids[1..2], "Nati").unwrap();
+        let (alex, _) = store.face_set_name(&ids[1..2], "Alex").unwrap();
 
         // The constraint the ordering exists for: a second row at the same
         // (photo_id, face_index) is rejected, so inserting before deleting
@@ -4015,7 +4015,7 @@ mod tests {
         // SECOND insert (the carried one) violates the foreign key, after the
         // delete and the first insert have already happened inside the tx.
         worker
-            .execute("DELETE FROM persons WHERE id = ?1", params![nati.person.id])
+            .execute("DELETE FROM persons WHERE id = ?1", params![alex.person.id])
             .unwrap();
         let err = commit_scan(
             &mut worker,
@@ -4055,7 +4055,7 @@ mod tests {
     fn a_mid_insert_unique_conflict_rolls_the_carry_over_back() {
         let (store, mut worker, _, _) = setup();
         let (gen, ids) = seed_faces(&mut worker);
-        let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
+        let (alex, _) = store.face_set_name(&ids[..1], "Alex").unwrap();
         let before = store.faces_for_photo("p1").unwrap().unwrap();
         let snap = snapshot(&worker, "p1", gen).unwrap();
         worker
@@ -4092,7 +4092,7 @@ mod tests {
             before.iter().map(|f| f.face_id).collect::<Vec<_>>(),
             "the photo is exactly the rows it was — the delete rolled back"
         );
-        assert_eq!(after[0].person_id, Some(nati.person.id), "name intact");
+        assert_eq!(after[0].person_id, Some(alex.person.id), "name intact");
         assert_eq!(
             face_revision(&worker, "p1").unwrap(),
             snap.revision,
@@ -4196,9 +4196,9 @@ mod tests {
     fn merging_a_person_into_themselves_changes_nothing() {
         let (store, mut worker, folder_id, _) = setup();
         let (_, ids) = seed_faces(&mut worker);
-        let (nati, _) = store.face_set_name(&ids, "Nati").unwrap();
+        let (alex, _) = store.face_set_name(&ids, "Alex").unwrap();
         assert_eq!(
-            store.merge_persons(nati.person.id, nati.person.id).unwrap(),
+            store.merge_persons(alex.person.id, alex.person.id).unwrap(),
             0
         );
         let persons = store.list_persons(folder_id).unwrap();
@@ -4209,35 +4209,35 @@ mod tests {
     #[test]
     fn ignored_faces_leave_every_surface_and_come_back() {
         let (store, mut worker, folder_id, _) = setup();
-        let (gen, nati, _) = seed_recognition(&store, &mut worker);
-        // Ignore Nati's confirmed face + p2's unassigned lookalike (a
+        let (gen, alex, _) = seed_recognition(&store, &mut worker);
+        // Ignore Alex's confirmed face + p2's unassigned lookalike (a
         // "statue/stranger cluster dismiss").
         let p2_face = store.faces_for_photo("p2").unwrap().unwrap()[0].face_id;
-        let nati_face: i64 = {
+        let alex_face: i64 = {
             let conn = store.lock_conn();
             conn.query_row(
                 "SELECT id FROM faces WHERE person_id = ?1",
-                params![nati],
+                params![alex],
                 |r| r.get(0),
             )
             .unwrap()
         };
         assert_eq!(
             store
-                .set_faces_ignored(&[nati_face, p2_face], true)
+                .set_faces_ignored(&[alex_face, p2_face], true)
                 .unwrap(),
             2
         );
 
         // Gone from counts, prototypes, clusters and the sweep.
         let persons = store.list_persons(folder_id).unwrap();
-        let nati_row = persons.iter().find(|p| p.id == nati).unwrap();
-        assert_eq!(nati_row.folder_count, 0, "ignoring clears the assignment");
+        let alex_row = persons.iter().find(|p| p.id == alex).unwrap();
+        assert_eq!(alex_row.folder_count, 0, "ignoring clears the assignment");
         assert!(
             person_prototypes(&worker, gen, 5)
                 .unwrap()
                 .iter()
-                .all(|p| p.person_id != nati),
+                .all(|p| p.person_id != alex),
             "ignored faces never train prototypes"
         );
         let protos = person_prototypes(&worker, gen, 5).unwrap();
@@ -4250,15 +4250,15 @@ mod tests {
         assert!(out.clusters.iter().all(|c| !c.face_ids.contains(&p2_face)));
         assert!(out.loose.iter().all(|c| c.face_id != p2_face));
 
-        // Reversible: un-ignore returns the face to Unnamed (not to Nati —
+        // Reversible: un-ignore returns the face to Unnamed (not to Alex —
         // the assignment was deliberately dropped).
-        store.set_faces_ignored(&[nati_face], false).unwrap();
+        store.set_faces_ignored(&[alex_face], false).unwrap();
         let f = store
             .faces_for_photo("p1")
             .unwrap()
             .unwrap()
             .into_iter()
-            .find(|f| f.face_id == nati_face)
+            .find(|f| f.face_id == alex_face)
             .unwrap();
         assert!(!f.ignored);
         assert_eq!(f.person_id, None);
@@ -4268,11 +4268,11 @@ mod tests {
     fn delete_person_frees_faces_and_drops_rejections() {
         let (store, mut worker, folder_id, _) = setup();
         let (_, ids) = seed_faces(&mut worker);
-        let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
+        let (alex, _) = store.face_set_name(&ids[..1], "Alex").unwrap();
         let (dani, _) = store.face_set_name(&ids[1..], "Dani").unwrap();
-        store.face_reject(ids[1], nati.person.id).unwrap();
+        store.face_reject(ids[1], alex.person.id).unwrap();
 
-        assert_eq!(store.delete_person(nati.person.id).unwrap(), 1);
+        assert_eq!(store.delete_person(alex.person.id).unwrap(), 1);
         let persons = store.list_persons(folder_id).unwrap();
         assert_eq!(persons.len(), 1);
         assert_eq!(persons[0].id, dani.person.id, "other people untouched");
@@ -4283,7 +4283,7 @@ mod tests {
         let n: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM face_person_rejections WHERE person_id = ?1",
-                params![nati.person.id],
+                params![alex.person.id],
                 |r| r.get(0),
             )
             .unwrap();
@@ -4294,7 +4294,7 @@ mod tests {
     fn rescan_marks_folder_stale_and_reports_chip_counts() {
         let (store, mut worker, folder_id, _) = setup();
         let (_, ids) = seed_faces(&mut worker);
-        store.face_set_name(&ids[..1], "Nati").unwrap();
+        store.face_set_name(&ids[..1], "Alex").unwrap();
         let rows = store.rescan_faces(folder_id).unwrap();
         assert_eq!(
             rows,
@@ -4318,21 +4318,21 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(name, "Nati");
+        assert_eq!(name, "Alex");
     }
 
     #[test]
     fn rename_reports_conflict_for_merge_offer() {
         let (store, mut worker, _, _) = setup();
         let (_, ids) = seed_faces(&mut worker);
-        let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
+        let (alex, _) = store.face_set_name(&ids[..1], "Alex").unwrap();
         let (dani, _) = store.face_set_name(&ids[1..], "Dani").unwrap();
         assert!(matches!(
-            store.rename_person(nati.person.id, "Natalie").unwrap(),
+            store.rename_person(alex.person.id, "Alexis").unwrap(),
             RenameOutcome::Renamed
         ));
         // Colliding rename (case-insensitive) is a merge offer, not an error.
-        match store.rename_person(nati.person.id, "dani").unwrap() {
+        match store.rename_person(alex.person.id, "dani").unwrap() {
             RenameOutcome::Conflict {
                 target_id,
                 target_name,
@@ -4348,30 +4348,30 @@ mod tests {
     fn merge_persons_moves_faces_rekeys_rejections_drops_contradictions() {
         let (store, mut worker, folder_id, _) = setup();
         let (_, ids) = seed_faces(&mut worker);
-        // "Nai" (typo, face 1) and "Nati" (face 2).
-        let (nai, _) = store.face_set_name(&ids[..1], "Nai").unwrap();
-        let (nati, _) = store.face_set_name(&ids[1..], "Nati").unwrap();
-        // Face 1 once got "not Nati" (before the user realized Nai==Nati),
-        // plus a "not Nai" from some third face's history — via face 2.
-        store.face_reject(ids[0], nati.person.id).unwrap();
-        // face_reject cleared nothing (face 1 is Nai's), but re-assert it:
-        store.face_assign(ids[0], Some(nai.person.id)).unwrap();
-        store.face_reject(ids[1], nai.person.id).unwrap();
-        store.face_assign(ids[1], Some(nati.person.id)).unwrap();
+        // "Aelx" (typo, face 1) and "Alex" (face 2).
+        let (aelx, _) = store.face_set_name(&ids[..1], "Aelx").unwrap();
+        let (alex, _) = store.face_set_name(&ids[1..], "Alex").unwrap();
+        // Face 1 once got "not Alex" (before the user realized Aelx==Alex),
+        // plus a "not Aelx" from some third face's history — via face 2.
+        store.face_reject(ids[0], alex.person.id).unwrap();
+        // face_reject cleared nothing (face 1 is Aelx's), but re-assert it:
+        store.face_assign(ids[0], Some(aelx.person.id)).unwrap();
+        store.face_reject(ids[1], aelx.person.id).unwrap();
+        store.face_assign(ids[1], Some(alex.person.id)).unwrap();
 
-        let moved = store.merge_persons(nai.person.id, nati.person.id).unwrap();
+        let moved = store.merge_persons(aelx.person.id, alex.person.id).unwrap();
         assert_eq!(moved, 1);
         let persons = store.list_persons(folder_id).unwrap();
         assert_eq!(persons.len(), 1, "source person removed");
-        assert_eq!(persons[0].id, nati.person.id);
+        assert_eq!(persons[0].id, alex.person.id);
         assert_eq!(persons[0].folder_count, 2, "faces moved to the survivor");
-        // The moved face's "not Nati" contradiction is gone — the merge
-        // asserts they ARE Nati.
+        // The moved face's "not Alex" contradiction is gone — the merge
+        // asserts they ARE Alex.
         let conn = store.lock_conn();
         let n: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM face_person_rejections WHERE person_id = ?1",
-                params![nati.person.id],
+                params![alex.person.id],
                 |r| r.get(0),
             )
             .unwrap();
@@ -4379,7 +4379,7 @@ mod tests {
         let orphaned: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM face_person_rejections WHERE person_id = ?1",
-                params![nai.person.id],
+                params![aelx.person.id],
                 |r| r.get(0),
             )
             .unwrap();
@@ -4420,16 +4420,16 @@ mod tests {
     fn user_assignment_clears_stale_not_x() {
         let (store, mut worker, _, _) = setup();
         let (_, ids) = seed_faces(&mut worker);
-        let (nati, _) = store.face_set_name(&ids[..1], "Nati").unwrap();
-        store.face_reject(ids[0], nati.person.id).unwrap(); // "not Nati"
-                                                            // The user changes their mind: explicit re-assign to Nati.
-        store.face_assign(ids[0], Some(nati.person.id)).unwrap();
+        let (alex, _) = store.face_set_name(&ids[..1], "Alex").unwrap();
+        store.face_reject(ids[0], alex.person.id).unwrap(); // "not Alex"
+                                                            // The user changes their mind: explicit re-assign to Alex.
+        store.face_assign(ids[0], Some(alex.person.id)).unwrap();
         let conn = store.lock_conn();
         let n: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM face_person_rejections
                  WHERE face_id = ?1 AND person_id = ?2",
-                params![ids[0], nati.person.id],
+                params![ids[0], alex.person.id],
                 |r| r.get(0),
             )
             .unwrap();

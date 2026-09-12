@@ -1,8 +1,18 @@
 # Surface registry
 
-Keys are the defaults in `src-tauri/src/keymap.rs` (the user's
-`keymap.toml` may override — check `~/Library/Application Support/com.cleung.ember/keymap.toml`
-if a key does nothing). Anchors are CSS selectors in the rendered DOM.
+Keys below are the defaults in `src-tauri/src/keymap.rs`; anchors are CSS
+selectors in the rendered DOM. Do not inspect the user keymap or database in
+synthetic mode. If a key does nothing, verify the default in source and report
+the runtime mismatch as a limit.
+
+## Data-mode boundary
+
+Real-data lookup is an opt-in fallback, never setup. SQL descriptions below are
+selection criteria for a private audit that already has explicit, one-run user
+consent; they are not commands to run during an ordinary audit. Never print a
+folder path, filename, EXIF value, person label, face record, or database row.
+Prefer an equivalent Storybook state, the generated synthetic fixture, or a
+code-only finding. A missing state does not expand the audit's permission.
 
 ## Unsafe during any audit
 
@@ -45,7 +55,8 @@ toggle in localStorage — restore them to how you found them.
 - States: at rest; with stars/tags/soft/missing marks (pick a folder where
   `photos.rating>0` and `tags<>''` — query below); scrolled to first/last (`Home`/`End`).
 - Safe: flips; clicking a `.strip-thumb` (navigation only).
-- Query for a dense window: `select stem, rating, tags from photos where folder_id=? and (rating>0 or tags<>'') order by stem limit 20`.
+- Private-data selection criterion after consent: photos with a nonzero rating
+  or tags in a dense window. Do not reproduce the matching stems or rows.
 - Code: `src/components/Filmstrip.tsx`.
 
 ### Metadata panel
@@ -73,7 +84,8 @@ toggle in localStorage — restore them to how you found them.
   it only loads faces); unnamed clusters at every scroll depth; loose faces
   (`show N faces seen only once` is safe; selecting chips is safe, naming is not);
   footer; disabled/first-run, scanning, toasts, confirms — from code.
-- Best folder: `select fo.path, count(distinct f.person_id) persons, sum(f.person_id is null and f.ignored=0) unnamed from folders fo join photos p on p.folder_id=fo.id join faces f on f.photo_id=p.id group by fo.id order by persons desc`.
+- Private-data selection criterion after consent: a folder containing named and
+  unnamed faces. Do not reproduce its path, names, counts, or rows.
 - Code: `src/components/PeoplePanel.tsx`; deviations: `docs/FACES_DEVIATIONS.md`.
 - Reference run: faces audit 2026-08-23.
 

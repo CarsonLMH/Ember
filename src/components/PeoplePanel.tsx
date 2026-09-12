@@ -337,7 +337,7 @@ export default function PeoplePanel({
     reload();
   };
 
-  /** Name the selected loose faces — "Nati" folds them into existing Nati,
+  /** Name the selected loose faces — "Alex" folds them into existing Alex,
    * and the harder shots become confirmed references that improve future
    * recognition (the sweep re-runs right after). */
   const nameLoose = async (name: string) => {
