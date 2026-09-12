@@ -4,7 +4,7 @@
 // per run — the XMP write-through queue embeds ratings into these files, so
 // reusing them would leak verdicts from the previous run into adoption.
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -87,6 +87,8 @@ for (let i = 1; i <= count; i += 1) {
     `-DateTimeOriginal=2026:08:01 ${String(12 + Math.floor(i / 3600)).padStart(2, '0')}:${String(Math.floor(i / 60) % 60).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}`,
     jpg,
   ], { stdio: 'pipe' });
+  const capturedAt = new Date(Date.UTC(2026, 7, 1, 19, 0, i));
+  utimesSync(jpg, capturedAt, capturedAt);
 }
 rmSync(scratch, { force: true });
 console.log(`e2e fixtures: ${count} JPEGs in ${outDir}`);

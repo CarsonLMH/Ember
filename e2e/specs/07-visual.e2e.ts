@@ -26,9 +26,24 @@ async function setPhotoContentHidden(hidden: boolean): Promise<void> {
   }, hidden);
 }
 
+async function normalizeChrome(): Promise<void> {
+  if (!(await $('.filmstrip').isDisplayed())) {
+    await key('t', 1, 0);
+    await $('.filmstrip').waitForDisplayed();
+  }
+  if (!(await $('.exif-panel').isDisplayed())) {
+    await key('i', 1, 0);
+    await $('.exif-panel').waitForDisplayed();
+  }
+}
+
 describe('visual regression: stable application chrome', () => {
   before(async () => {
     await waitForFolderOpen();
+    // UI preferences live outside the SQLite sandbox and deliberately survive
+    // app restarts. Put the visual surface in one explicit state instead of
+    // approving whichever filmstrip/panel choices the previous run left.
+    await normalizeChrome();
     // Folder-open renders before the background capture-time sort finishes.
     // A snapshot of that transitional "sorting…" note is timing-dependent,
     // so wait on the state marker rather than approving it into the baseline.
