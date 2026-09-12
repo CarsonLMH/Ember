@@ -522,6 +522,11 @@ export async function setPersonFilter(personFilter: number | null): Promise<void
     }
   }
   rebuild(state.all, { personFilter }, currentPhoto()?.id ?? null);
+  // A faces-progress event can land while the initial personMap request above
+  // is in flight, before personFilter is visible in state. That event cannot
+  // schedule a refresh, so enabling the filter always queues one follow-up;
+  // later worker events coalesce into the same debounced request.
+  if (personFilter !== null) schedulePersonRefresh();
 }
 
 export function loadPersons(): void {

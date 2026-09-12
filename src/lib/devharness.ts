@@ -217,13 +217,22 @@ export async function runIfRequested(): Promise<void> {
     await session.setPersonFilter(personId);
     let s = session.getState();
     const before = s.photos.length;
-    // Membership must be exact: every visible photo carries this person.
+    // Let the sweep + debounced live refetches stream matches in. A fixed
+    // four-second sleep was too short for a real mixed RAF/JPEG folder: the
+    // storm started while background assignments were still landing and the
+    // filtered cohort had only four photos, so it could record three flips.
+    let waitedMs = 0;
+    while (s.photos.length < 11 && waitedMs < 60_000) {
+      await sleep(1000);
+      waitedMs += 1000;
+      s = session.getState();
+    }
+    // Membership must be exact after the stream settles: every photo admitted
+    // to the final measured cohort carries this person in the current map.
     const map = await personMap(folderId);
-    const bogus = s.photos.filter((p) => !(map[p.id] ?? []).includes(personId));
-    // Let the sweep + live refetch land, then re-measure (matches stream in).
-    await sleep(4000);
     s = session.getState();
     const after = s.photos.length;
+    const bogus = s.photos.filter((p) => !(map[p.id] ?? []).includes(personId));
     const report = await perf.flipStorm(60, 60);
     // flips >= 10 guards against a vacuous pass: a filtered view shorter than
     // the storm stops advancing at its end and records no samples.
@@ -245,7 +254,7 @@ export async function runIfRequested(): Promise<void> {
       `peopletest done: ${ok ? 'PASS' : 'FAIL'} named=${target.faceIds.length} ` +
         `visible=${before}→${after}/${s.all.length} bogus=${bogus.length} ` +
         `scanningWhenFiltered=${scanning} p99=${report.p99.toFixed(1)} ` +
-        `misses=${report.missServes}/${report.flips} cleanedUp=${undone}`,
+        `misses=${report.missServes}/${report.flips} waited=${waitedMs}ms cleanedUp=${undone}`,
     );
     await sleep(300);
     await quitApp();

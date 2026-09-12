@@ -20,6 +20,8 @@ when in doubt, ask a session to rebuild.
   while Ember keeps probing for its repaired image.
 - Fix: Escape closes People from its naming fields, clicking another person
   commits a pending rename, and clickable face chips work from the keyboard.
+- Fix: a person-filtered view now picks up faces matched just as the filter is
+  being enabled, instead of sometimes freezing on the first small cluster.
 - The filmstrip can receive keyboard focus, so keyboard and assistive-technology
   users can reach and scroll it.
 - **Focus check**: every photo gets a sharpness score measured at the camera's

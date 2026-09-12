@@ -204,6 +204,33 @@ describe('faces-progress handling', () => {
     expect(session.getState().personFilter).toBeNull();
     expect(session.getState().photos.map((p) => p.id)).toEqual(['c']);
   });
+
+  it('refreshes membership when a faces event races filter activation', async () => {
+    vi.useFakeTimers();
+    try {
+      let release!: (v: Record<string, number[]>) => void;
+      const initialMap = new Promise<Record<string, number[]>>((resolve) => {
+        release = resolve;
+      });
+      personMap
+        .mockImplementationOnce(() => initialMap)
+        .mockResolvedValue({ a: [7], b: [7] });
+
+      const pending = session.setPersonFilter(7);
+      // The worker commits another match while the initial membership request
+      // is in flight. Its event arrives before personFilter is visible in
+      // session state, so filter activation must arrange a follow-up refresh.
+      onFaces?.({ folderId: 1, scanned: 2, total: 2, photoIds: ['b'] });
+      release({ a: [7] });
+      await pending;
+      expect(session.getState().photos.map((p) => p.id)).toEqual(['a']);
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(session.getState().photos.map((p) => p.id)).toEqual(['a', 'b']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('focusZoom (F key)', () => {
