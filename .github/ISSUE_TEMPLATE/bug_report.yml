@@ -1,0 +1,94 @@
+name: Bug report
+description: Report a reproducible problem in an Apple Silicon source build
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Ember.
+
+        **Privacy first:** use only synthetic or clearly licensed public fixtures. Never attach real photos, Ember databases or face data, XMP or private EXIF, private filenames or paths, or private logs. For security-sensitive problems, stop here and use the [private reporting instructions](https://github.com/CarsonLMH/Ember/blob/main/SECURITY.md).
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched the existing issues for this problem.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+
+  - type: input
+    id: build
+    attributes:
+      label: Build
+      description: Paste the version and commit from Ember's `?` footer, or the source commit SHA.
+      placeholder: "1.4.0 · abc1234"
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: macOS and Mac
+      description: Ember's supported public build target is Apple Silicon.
+      placeholder: "macOS 15.6; M1 Max"
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior without private library details.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Give the smallest deterministic sequence using a synthetic or clearly licensed public fixture. Use placeholders such as `<photo-folder>` for all paths.
+      placeholder: |
+        1. Build commit ...
+        2. Open a synthetic fixture containing ...
+        3. Press ...
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: sanitized_notes
+    attributes:
+      label: Sanitized technical notes
+      description: Do not paste private logs. Include only redacted error text, aggregate timings, or links to public CI output that are necessary to understand the bug.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I used no real personal photos or derivatives, including screenshots, crops, previews, thumbnails, or face chips.
+          required: true
+        - label: I included no Ember database, face data, XMP, private EXIF, filenames, paths, or private logs.
+          required: true
+
+  - type: checkboxes
+    id: conduct
+    attributes:
+      label: Code of Conduct
+      options:
+        - label: I agree to follow the project's Code of Conduct.
+          required: true

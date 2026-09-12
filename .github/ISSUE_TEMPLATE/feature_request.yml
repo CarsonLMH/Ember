@@ -1,0 +1,76 @@
+name: Feature request
+description: Propose a focused improvement to Ember's culling workflow
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ember prioritizes culling speed, verdict durability, and a focused single-user workflow—in that order. Explain the problem before the interface.
+
+        Do not include real photos, Ember databases or face data, XMP or private EXIF, private filenames or paths, or private logs.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and the roadmap in `SPEC.md`.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What real culling problem is unresolved, and who encounters it?
+    validations:
+      required: true
+
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Proposed workflow
+      description: Describe the user interaction and the intended outcome. Mockups must use synthetic or clearly licensed public imagery.
+    validations:
+      required: true
+
+  - type: textarea
+    id: priorities
+    attributes:
+      label: Performance and durability
+      description: Could this touch keypress-to-render latency, folder-open latency, journal ordering, XMP, trash/restore, or other filesystem work? Explain why or why not.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What simpler workaround or design did you consider?
+    validations:
+      required: false
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and non-goals
+      description: What should deliberately remain out of this change?
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: This request contains no real personal photos or derivatives, Ember database or face data, XMP, private EXIF, filenames, paths, or private logs.
+          required: true
+
+  - type: checkboxes
+    id: conduct
+    attributes:
+      label: Code of Conduct
+      options:
+        - label: I agree to follow the project's Code of Conduct.
+          required: true
