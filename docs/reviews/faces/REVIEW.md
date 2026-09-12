@@ -1,6 +1,6 @@
 # Faces feature branch review
 
-- **Specification:** `/Users/cleung/.claude/plans/mutable-finding-blum.md` (Rev 4)
+- **Specification:** private implementation plan (Rev 4; not published)
 - **Base:** `92283e44cceaa5ae130db57e185a3f7580114af1` (`main`)
 - **Reviewed head:** `e9ee8f0ac0d04ffc0e604a04a7963f8ae6c03469`
 - **Implementation head:** `2756b447456eaa9f0128346543ce3354ccf0774c` (`e9ee8f0` is a documentation-only follow-up)

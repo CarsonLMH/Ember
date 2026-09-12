@@ -1,6 +1,6 @@
 # Follow-up review: Faces plan Revision 2
 
-Reviewed plan: `~/.claude/plans/mutable-finding-blum.md`, Revision 2
+Reviewed plan: private implementation plan (Revision 2; not published)
 
 ## Assessment
 
@@ -96,4 +96,3 @@ When a user says a named face is not that person, record the rejection regardles
 ## Readiness
 
 After the four main issues are incorporated and the smaller semantics are clarified, the plan is implementation-ready. Slice 0 remains the correct go/no-go starting point.
-

@@ -1,6 +1,6 @@
 # Faces: what shipped that the plan didn't say
 
-The implementation plan (`~/.claude/plans/mutable-finding-blum.md`, rev 4) was
+The private implementation plan (Rev 4; not published) was
 followed slice by slice, but the product owner drove every slice on real
 X-T50 photos and that feedback changed the design. This file records
 **everything in the shipped feature that is not in the plan**, so a reviewer

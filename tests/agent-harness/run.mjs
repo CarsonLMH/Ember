@@ -116,9 +116,8 @@ check(
   'surface lookup guidance cannot select private data by default',
 );
 check(
-  !/\bnati\b/i.test(activePublicExamples) &&
-    !/\/Users\/[A-Za-z0-9._-]+/.test(activePublicExamples),
-  'active contributor-facing examples omit maintainer names and workstation paths',
+  !/\/Users\/[A-Za-z0-9._-]+/.test(activePublicExamples),
+  'active contributor-facing examples omit workstation paths; private person names still require human review',
 );
 
 const gateWindow = gateConfig.app?.windows?.find((window) => window.label === 'main');

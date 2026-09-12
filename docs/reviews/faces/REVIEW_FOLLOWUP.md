@@ -4,7 +4,7 @@
 - **Branch head:** `e9ee8f0ac0d04ffc0e604a04a7963f8ae6c03469` (`faces`)
 - **Reviewed state:** Opus 5's uncommitted repair pass (14 modified files plus `src/lib/session.test.ts`)
 - **Original review:** `REVIEW.md`
-- **Source plan:** `/Users/cleung/.claude/plans/mutable-finding-blum.md` (Rev 4)
+- **Source plan:** private implementation plan (Rev 4; not published)
 - **Method:** report only; this follow-up review made no implementation changes
 
 ## Verdict
@@ -213,4 +213,3 @@ Not verified: GUI/photo-library gates, cold-open/RSS/app-size acceptance, rating
 4. Treat the existing-person correction split above as the default plan-conformant implementation. Pause only for the genuine product decisions identified here.
 5. After fixes, rerun all independent verification commands and report unverified runtime gates explicitly.
 6. Do not declare the branch mergeable; return it for another independent review.
-

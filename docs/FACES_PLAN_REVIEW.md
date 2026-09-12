@@ -1,6 +1,10 @@
 # Review: Faces feature plan
 
-Reviewed plan: `~/.claude/plans/mutable-finding-blum.md`
+Reviewed plan: initial private implementation plan (not published)
+
+Publication note: a real person label used in the original private review was
+replaced with the neutral placeholder `ExamplePerson`; the technical evidence
+and recommendations are unchanged.
 
 ## Overall assessment
 
@@ -8,9 +12,9 @@ The feature fits Ember well, and the People panel plus an AND-combinable person 
 
 ## Must resolve before implementation
 
-### 1. "Not Nati" is not durable
+### 1. "Not ExamplePerson" is not durable
 
-The proposed correction sets `person_id = NULL`, but a later global sweep can assign the same face to Nati again. `ignored` is not equivalent because it suppresses the face entirely.
+The proposed correction sets `person_id = NULL`, but a later global sweep can assign the same face to `ExamplePerson` again. `ignored` is not equivalent because it suppresses the face entirely.
 
 Add a negative-association table such as:
 
@@ -83,7 +87,7 @@ Preserve user-confirmed assignments by matching old and new detections using rec
 
 ## Schema and model recommendations
 
-- Add a case-insensitive unique name constraint, preferably using a normalized name column. `Nati`, `nati`, and `" Nati "` should not create separate people.
+- Add a case-insensitive unique name constraint, preferably using a normalized name column. `ExamplePerson`, `exampleperson`, and `" ExamplePerson "` should not create separate people.
 - Constrain `assigned_by` with a `CHECK` constraint.
 - Add `ON DELETE CASCADE` from `faces` and `face_scan` to photos, even if Ember does not currently delete photo rows.
 - Record the detector model hash, recognizer model hash, and preprocessing version. A schema migration is too coarse to protect against accidentally replacing a bundled model.
@@ -102,7 +106,7 @@ Use:
 - at least one different-person negative;
 - golden detector boxes and landmarks within tolerance;
 - an embedding checksum or selected golden values for one fixed aligned crop;
-- a test proving "not Nati" survives subsequent naming, scanning, and global sweeps;
+- a test proving "not ExamplePerson" survives subsequent naming, scanning, and global sweeps;
 - cache deletion followed by automatic chip repair;
 - refresh and folder switching during active inference;
 - rating acknowledgement latency while clustering and face writes are active;
@@ -146,4 +150,3 @@ This preserves the good architecture in the plan while postponing its riskiest b
 - Person filtering should compose with stars, recipe, and tags using AND semantics.
 - Cursor-prioritized background work, pre-baked chips, protocol path validation, and explicit model-license bundling are sound choices.
 - The order-hint fix is valid and should be extracted into a tested pure helper as proposed.
-

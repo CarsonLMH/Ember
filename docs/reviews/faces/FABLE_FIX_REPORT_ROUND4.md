@@ -2,7 +2,7 @@
 
 - **Date:** 2026-08-11
 - **Base commit:** `e9ee8f0ac0d04ffc0e604a04a7963f8ae6c03469` (`faces`), unchanged — nothing committed
-- **Inputs:** `~/.claude/plans/mutable-finding-blum.md` (rev 4), `REVIEW.md`, `REVIEW_FOLLOWUP.md`,
+- **Inputs:** private implementation plan (Rev 4; not published), `REVIEW.md`, `REVIEW_FOLLOWUP.md`,
   `FABLE_FIX_REPORT.md` (treated as hypotheses), `REVIEW_ROUND3.md` (work queue),
   `docs/FACES_DEVIATIONS.md`, `SPEC.md`, `CLAUDE.md`, the complete worktree diff
 - **Scope:** repaired the uncommitted working tree in place; no resets, no rewrites of unrelated

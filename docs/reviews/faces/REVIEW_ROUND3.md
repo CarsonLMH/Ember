@@ -3,7 +3,7 @@
 - **Date:** 2026-08-11
 - **Branch head:** `e9ee8f0ac0d04ffc0e604a04a7963f8ae6c03469` (`faces`)
 - **Reviewed state:** the uncommitted implementation described by `FABLE_FIX_REPORT.md`
-- **Inputs:** `~/.claude/plans/mutable-finding-blum.md`, `REVIEW.md`, `REVIEW_FOLLOWUP.md`, `FABLE_FIX_REPORT.md`, the full worktree diff, and the tests
+- **Inputs:** private implementation plan (Rev 4; not published), `REVIEW.md`, `REVIEW_FOLLOWUP.md`, `FABLE_FIX_REPORT.md`, the full worktree diff, and the tests
 - **Method:** report only; this review made no implementation changes
 
 ## Verdict
