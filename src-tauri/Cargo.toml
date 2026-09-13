@@ -34,7 +34,7 @@ walkdir = "2"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 kamadak-exif = "0.6"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "rayon"] }
-fast_image_resize = "5"
+fast_image_resize = "6"
 rayon = "1"
 crossbeam-channel = "0.5"
 rusqlite = { version = "0.40.1", features = ["bundled"] }
