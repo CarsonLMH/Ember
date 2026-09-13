@@ -82,7 +82,8 @@ If a proposed change conflicts with them, discuss the conflict before coding.
 ## Testing tiers
 
 Run the smallest relevant tier while developing, then all affected tiers before
-opening a pull request. CI runs the deterministic source checks.
+opening a pull request. CI runs the deterministic source checks and hidden
+native app checks.
 
 ### Source checks
 
@@ -99,7 +100,8 @@ cargo test
 
 ### Hidden synthetic app checks
 
-These use an isolated synthetic database and do not activate an app window:
+These also run in CI. They use an isolated synthetic database and do not
+activate an app window:
 
 ```sh
 npm run e2e:build

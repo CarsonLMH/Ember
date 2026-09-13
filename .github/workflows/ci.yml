@@ -3,6 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -13,19 +14,40 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Review dependency changes
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          fail-on-scopes: runtime, development
+      - name: Verify Apple Silicon runner
+        run: test "$(uname -m)" = arm64
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
           cache: npm
       - name: Enable the declared npm version
         run: corepack enable npm && node --version && npm --version
+      # Pull requests can change package scripts. Install inertly, verify the
+      # registry provenance, then run only the one platform-prep script this
+      # graph actually needs.
       - name: Install JavaScript dependencies
-        run: npm ci
-      - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
+        run: npm ci --ignore-scripts
       - name: Verify npm registry signatures
         run: npm audit signatures
+      - name: Prepare the allowlisted esbuild binary
+        run: npm rebuild esbuild
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+      # Known high-severity findings are confined to development tooling and
+      # documented in SECURITY.md. A critical finding anywhere still blocks.
+      - name: Block critical npm vulnerabilities
+        run: npm audit --audit-level=critical
       - name: Validate agent harness
         run: npm run test:harness
       - name: Run frontend unit tests
@@ -36,13 +58,24 @@ jobs:
         run: npm run build
       - name: Build Storybook
         run: npm run storybook:build
+      - name: Validate maintenance script syntax
+        run: |
+          bash -n scripts/checks.sh scripts/gate.sh scripts/ship.sh
+          node --check scripts/e2e-fixtures.mjs
+          node --check scripts/readme-fixtures.mjs
       # rustup discovers rust-toolchain.toml and installs its pinned compiler,
       # formatter, and linter. Keep local development and CI on one toolchain.
       - name: Install the declared Rust toolchain
         run: rustc --version && cargo --version && cargo clippy --version && cargo fmt --version
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri
+      - name: Install pinned RustSec audit tool
+        run: cargo install --locked --version 0.22.2 cargo-audit
+      - name: Audit Rust dependencies
+        run: cargo audit --file Cargo.lock
+        working-directory: src-tauri
       # The XMP file-safety tests probe for exiftool and silently skip
       # without it — install so they actually gate.
       - name: Install exiftool
@@ -51,21 +84,29 @@ jobs:
         run: cargo fmt --check
         working-directory: src-tauri
       - name: Lint Rust
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
+        working-directory: src-tauri
+      - name: Compile optional MCP bridge
+        run: cargo check --locked --features mcp
         working-directory: src-tauri
       - name: Run Rust tests
-        run: cargo test
+        run: cargo test --locked
         working-directory: src-tauri
       # The real-model faces fixture (ignored by default so plain `cargo test`
       # stays fast everywhere): actual YuNet+SFace inference on a known face.
       # The pinned .onnx models are committed, so a clean runner can run it —
       # this is what catches silent preprocessing breakage.
       - name: Run bundled-model inference test
-        run: cargo test -- --ignored detects_known_face_and_embeds_deterministically
+        run: cargo test --locked -- --ignored detects_known_face_and_embeds_deterministically
         working-directory: src-tauri
-      - name: Build Rust core
-        run: cargo build
-        working-directory: src-tauri
-# The perf/durability gates (scripts/gate.sh: flip-storm, zoomtest) need a
-# private real-photo fixture and native host. They stay local release gates;
-# CI does not enforce the latency budget.
+      # The installed local build is deliberately a debug bundle. Build the
+      # same shape here, without signing or publishing it as an artifact.
+      - name: Build the macOS app bundle
+        run: npm run tauri build -- --debug --ci --no-sign --bundles app -- --locked
+      - name: Build hidden native E2E app
+        run: npm run e2e:build
+      - name: Run hidden native E2E and accessibility checks
+        run: npm run e2e
+# Visible visual/perf checks and private real-photo gates need an agreed local
+# test window or an approved fixture. They stay local; CI does not claim the
+# 50 ms real-photo budget or maintainer acceptance.

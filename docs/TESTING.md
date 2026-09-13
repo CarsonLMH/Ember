@@ -42,17 +42,23 @@ runs on pushes to `main` and pull requests. It uses the checked-in Node/npm and
 Rust declarations, read-only repository permissions, and pinned action SHAs.
 The job currently performs:
 
-1. `npm ci`, production-dependency audit, and npm registry-signature checks.
+1. Inert `npm ci`, registry-signature verification before the one allowlisted
+   install script, production and critical full-graph audits, and pull-request
+   dependency review that rejects new high or critical findings.
 2. Agent-harness validation.
 3. Frontend unit tests, production build, and Storybook build.
-4. Rust formatting, strict Clippy, the default Rust suite, and the targeted
-   ignored bundled-model inference test.
-5. A Rust core build.
+4. RustSec dependency audit, formatting, strict Clippy, the default Rust suite
+   (including the bundled-model SHA pins), the optional MCP feature, and the
+   targeted ignored bundled-model inference test, all locked to `Cargo.lock`.
+5. The unsigned debug `.app` bundle used for local installs.
+6. Hidden synthetic native E2E, including kill-9 journal replay and automated
+   accessibility checks.
 
-CI does **not** currently run WebdriverIO native E2E, visual comparisons, the
-50 ms real-photo gate, or maintainer-library acceptance. A green badge is
-therefore evidence for the deterministic merge checks—not a claim that every
-hardware- and fixture-dependent gate ran on GitHub infrastructure.
+CI does **not** run visible visual comparisons, the instrumented visible perf
+tripwire, the 50 ms private real-photo gate, or maintainer-library acceptance.
+A green badge is therefore evidence for the deterministic merge checks—not a
+claim that every hardware- and fixture-dependent gate ran on GitHub
+infrastructure.
 
 ## Hidden synthetic native E2E
 

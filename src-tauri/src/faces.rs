@@ -1259,6 +1259,18 @@ mod tests {
             .join(name)
     }
 
+    #[test]
+    fn bundled_model_files_match_compiled_sha_pins() {
+        let models = models_dir(None);
+        for (file, expected) in [(YUNET_FILE, YUNET_SHA256), (SFACE_FILE, SFACE_SHA256)] {
+            let actual = sha256_hex(&models.join(file)).expect("bundled model must be readable");
+            assert_eq!(
+                actual, expected,
+                "{file} changed without updating its compiled SHA-256 pin"
+            );
+        }
+    }
+
     /// Store + a separate worker connection on one DB (the two-connection,
     /// and in spirit two-process, reality) plus a cache dir, with one photo's
     /// faces already committed — the "crash before bake" state.

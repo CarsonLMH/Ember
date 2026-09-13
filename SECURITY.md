@@ -15,20 +15,28 @@ project does not currently publish one.
 
 ## Dependency status
 
-CI audits the npm production dependency graph and verifies registry signatures.
-As of 2026-09-12, `npm audit --omit=dev` reports zero vulnerabilities and
-`npm audit signatures` verifies all 878 installed packages (201 with registry
-attestations).
+CI audits the npm production dependency graph, blocks critical findings in the
+full development graph, verifies registry signatures, and runs RustSec's audit
+against the locked Rust graph. As of 2026-09-12, the production npm audit and
+Rust vulnerability audit are clean, while `npm audit signatures` verifies all
+880 installed packages (203 with registry attestations).
 
-The full npm graph is not clean: the same lockfile currently reports 24
-vulnerable dev-tool package entries (18 high, 6 moderate), concentrated in the
-optional Tauri MCP bridge, WebdriverIO/Tauri test harness, and Vitest/Storybook
-chains. These tools are outside the npm production dependency graph, but they
-still matter on contributor and CI machines. Some upstream fixes require
-incompatible changes and the MCP chain has no complete current resolution, so
-the project records this debt instead of using `npm audit fix --force` or
-pretending it does not exist. Re-run both audit commands for current results;
-Dependabot proposes bounded updates for review.
+The full npm graph is not clean: it has high- and moderate-severity findings
+concentrated in the optional Tauri MCP bridge, WebdriverIO/Tauri test harness,
+and Vitest/Storybook chains. These tools are outside the npm production graph,
+but they still matter on contributor and CI machines. Some upstream fixes
+require incompatible changes and the MCP chain has no complete current
+resolution, so the project records this debt instead of using `npm audit fix
+--force` or pretending it does not exist. Pull requests cannot introduce new
+high- or critical-severity dependency findings, and any critical finding in the
+full installed npm graph blocks CI. Dependabot proposes bounded updates for
+review. RustSec's non-blocking transitive maintenance and soundness warnings
+remain visible in CI rather than being silently ignored.
+
+CI also hashes both committed ONNX face models and compares them with the
+compiled pins. Runtime keeps its warning-only behavior so intentional custom
+builds remain possible, but an unexplained model substitution cannot pass the
+repository's default Rust suite.
 
 ## Report a vulnerability privately
 
@@ -38,9 +46,8 @@ vulnerability.
 The preferred channel is GitHub's
 [private vulnerability reporting form](https://github.com/CarsonLMH/Ember/security/advisories/new).
 It creates a private security advisory visible only to the reporter and the
-repository's security team. Enabling private vulnerability reporting is a
-pending maintainer repository-setting action; use the fallback below if the
-form is not available yet.
+repository's security team. Private vulnerability reporting is enabled; use
+the fallback below only if GitHub's form is temporarily unavailable.
 
 If that form is unavailable, use a private contact method listed on the
 [maintainer's GitHub profile](https://github.com/CarsonLMH) and initially send

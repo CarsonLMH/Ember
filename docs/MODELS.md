@@ -88,11 +88,11 @@ face work to do. The DB generation identity is the pair of computed hashes plus
 An older or equal-ranked binary with a different generation parks instead of
 rewriting newer embeddings.
 
-The compiled SHA constants are reference pins, not a hard startup integrity
-gate: a mismatch currently logs a warning, while the computed hashes still
-drive DB compatibility. A clean database can therefore register changed model
-bytes at the current release rank. Release review must verify the bundled
-hashes rather than assuming the app will reject a substitution.
+The compiled SHA constants are not a hard startup integrity gate: a mismatch
+logs a warning, while the computed hashes still drive DB compatibility so an
+intentional custom build remains possible. The default Rust suite separately
+asserts that both model files committed to this repository match those pins, so
+CI rejects an unexplained substitution before it can land.
 
 ## ONNX Runtime build and licence contract
 

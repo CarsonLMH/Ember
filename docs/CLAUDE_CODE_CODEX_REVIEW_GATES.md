@@ -508,4 +508,3 @@ If reviews mostly produce rejected style suggestions, narrow the rubric or reduc
 - Codex CLI reference, including `codex review --uncommitted`, `--commit`, and `--base`: <https://learn.chatgpt.com/docs/developer-commands?surface=cli>
 - Claude Code hooks and `ExitPlanMode` hook input/decisions: <https://code.claude.com/docs/en/hooks>
 - Claude Code project skills and tool permissions: <https://code.claude.com/docs/en/skills>
-

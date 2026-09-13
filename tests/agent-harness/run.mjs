@@ -52,6 +52,7 @@ const compactDesignAudit = compact(designAudit);
 const compactDesignAuditSurfaces = compact(designAuditSurfaces);
 const claudeMcp = JSON.parse(read('.mcp.json'));
 const packageJson = JSON.parse(read('package.json'));
+const ciWorkflow = read('.github/workflows/ci.yml');
 const gateConfig = JSON.parse(read('src-tauri/tauri.gate.conf.json'));
 const gateScript = read('scripts/gate.sh');
 const devHarness = compact(read('src/lib/devharness.ts'));
@@ -211,7 +212,51 @@ check(
   'Codex Storybook endpoint matches the project server',
 );
 
-const codex = spawnSync('codex', ['mcp', 'list'], {
+const actionRefs = [...ciWorkflow.matchAll(/^\s*(?:-\s*)?uses:\s*([^\s#]+)/gm)].map(
+  (match) => match[1],
+);
+check(
+  actionRefs.length > 0 && actionRefs.every((ref) => /@[0-9a-f]{40}$/.test(ref)),
+  'CI actions are pinned to immutable commit SHAs',
+);
+check(
+  /permissions:\s*\n\s+contents:\s+read/.test(ciWorkflow) &&
+    /persist-credentials:\s+false/.test(ciWorkflow),
+  'CI keeps the GitHub token read-only and out of the checkout',
+);
+const npmInstall = ciWorkflow.indexOf('npm ci --ignore-scripts');
+const npmSignatures = ciWorkflow.indexOf('npm audit signatures');
+const npmRebuild = ciWorkflow.indexOf('npm rebuild esbuild');
+check(
+  npmInstall !== -1 &&
+    npmSignatures > npmInstall &&
+    npmRebuild > npmSignatures &&
+    !ciWorkflow.includes('npm rebuild --foreground-scripts'),
+  'CI verifies npm provenance before running the allowlisted install script',
+);
+check(
+  ciWorkflow.includes('cargo clippy --locked --all-targets -- -D warnings') &&
+    ciWorkflow.includes('cargo test --locked') &&
+    ciWorkflow.includes(
+      'cargo test --locked -- --ignored detects_known_face_and_embeds_deterministically',
+    ) &&
+    ciWorkflow.includes('cargo check --locked --features mcp') &&
+    ciWorkflow.includes('npm run tauri build -- --debug --ci --no-sign --bundles app -- --locked'),
+  'CI locks every Rust build and test to Cargo.lock',
+);
+check(
+  ciWorkflow.includes('run: npm run e2e:build') &&
+    ciWorkflow.includes('run: npm run e2e'),
+  'CI runs the hidden native durability and accessibility suite',
+);
+
+const codexVersion = packageJson.devDependencies?.['@openai/codex'];
+check(
+  /^\d+\.\d+\.\d+$/.test(codexVersion ?? ''),
+  'Codex CLI is pinned exactly for deterministic harness validation',
+);
+
+const codex = spawnSync(resolve(root, 'node_modules/.bin/codex'), ['mcp', 'list'], {
   cwd: root,
   encoding: 'utf8',
 });
@@ -220,17 +265,31 @@ if (codex.status === 0) {
   const output = codex.stdout.replaceAll('-', '_');
   check(output.includes('tauri'), 'Codex discovers the Tauri MCP server');
   check(output.includes('ember_storybook'), 'Codex discovers the Storybook MCP server');
+} else if (codex.error) {
+  console.error(codex.error.message);
 } else if (codex.stderr) {
   console.error(codex.stderr.trim());
 }
 
-const whitespace = spawnSync('git', ['diff', '--check'], {
+const emptyTree = spawnSync('git', ['hash-object', '-t', 'tree', '/dev/null'], {
   cwd: root,
   encoding: 'utf8',
 });
-check(whitespace.status === 0, 'tracked changes pass git diff --check');
-if (whitespace.status !== 0 && whitespace.stdout) {
-  console.error(whitespace.stdout.trim());
+const trackedWhitespace =
+  emptyTree.status === 0
+    ? spawnSync('git', ['diff', '--check', emptyTree.stdout.trim()], {
+        cwd: root,
+        encoding: 'utf8',
+      })
+    : { status: null, stdout: '' };
+check(
+  emptyTree.status === 0 && trackedWhitespace.status === 0,
+  'all tracked files pass git diff --check',
+);
+if (emptyTree.error) console.error(emptyTree.error.message);
+if (emptyTree.status !== 0 && emptyTree.stderr) console.error(emptyTree.stderr.trim());
+if (trackedWhitespace.status !== 0 && trackedWhitespace.stdout) {
+  console.error(trackedWhitespace.stdout.trim());
 }
 
 if (failures > 0) {

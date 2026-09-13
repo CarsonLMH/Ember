@@ -152,4 +152,3 @@ implementation without fresh approval:
 - Public product name: keep `Ember`, or use a more distinctive interim name such
   as `Ember Culler`. This pass will not change bundle identifiers, data paths, or
   code-level names either way.
-
