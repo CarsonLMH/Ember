@@ -1,6 +1,16 @@
 import { spawnSync } from 'node:child_process';
-import { lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import {
+  lstatSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -256,10 +266,20 @@ check(
   'Codex CLI is pinned exactly for deterministic harness validation',
 );
 
+// Project-scoped Codex configuration is intentionally ignored until the
+// checkout is trusted. Exercise that boundary explicitly with an isolated
+// home so this check never borrows a maintainer's personal trust settings.
+const codexHome = mkdtempSync(join(tmpdir(), 'ember-codex-harness-'));
+writeFileSync(
+  resolve(codexHome, 'config.toml'),
+  `[projects.${JSON.stringify(root)}]\ntrust_level = "trusted"\n`,
+);
 const codex = spawnSync(resolve(root, 'node_modules/.bin/codex'), ['mcp', 'list'], {
   cwd: root,
   encoding: 'utf8',
+  env: { ...process.env, CODEX_HOME: codexHome },
 });
+rmSync(codexHome, { recursive: true, force: true });
 check(codex.status === 0, 'Codex accepts the project MCP configuration');
 if (codex.status === 0) {
   const output = codex.stdout.replaceAll('-', '_');
